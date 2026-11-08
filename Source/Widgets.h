@@ -6,7 +6,7 @@
 namespace ui
 {
 // Pill-shaped segmented selector. The selected segment is filled white.
-class Segmented final : public juce::Component
+class Segmented final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     std::function<void(int)> onChange;
@@ -116,7 +116,7 @@ public:
     void paint(juce::Graphics& g) override
     {
         g.setColour(theme::dim);
-        g.setFont(theme::sans(10.0f, true));
+        g.setFont(theme::sans(11.0f, true));
         g.drawText(caption, getLocalBounds().removeFromTop(14), juce::Justification::centred);
         g.setColour(slider.isEnabled() ? theme::text : theme::faint);
         g.setFont(theme::mono(11.0f));
@@ -219,13 +219,13 @@ public:
             g.fillEllipse(die.getX() + die.getWidth() * p[0] - 2.6f, die.getY() + die.getHeight() * p[1] - 2.6f, 5.2f, 5.2f);
         g.restoreState();
 
-        auto label = inner.withTrimmedLeft(62.0f);
+        auto label = inner.withTrimmedLeft(58.0f);
         g.setColour(theme::text);
-        g.setFont(theme::sans(19.0f, true));
-        g.drawText("RANDOMIZE", label.removeFromTop(label.getHeight() * 0.62f).toNearestInt(), juce::Justification::bottomLeft);
+        g.setFont(theme::sans(17.0f, true));
+        g.drawFittedText("RANDOMIZE", label.removeFromTop(label.getHeight() * 0.62f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.75f);
         g.setColour(theme::dim);
         g.setFont(theme::sans(11.0f));
-        g.drawText(subtitle, label.toNearestInt(), juce::Justification::topLeft);
+        g.drawFittedText(subtitle, label.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
     }
 
     void setSubtitle(const juce::String& s) { if (s != subtitle) { subtitle = s; repaint(); } }
@@ -280,7 +280,7 @@ public:
         auto area = getLocalBounds().reduced(10, 4);
         auto top = area.removeFromTop(13);
         g.setColour(theme::dim);
-        g.setFont(theme::sans(9.5f, true));
+        g.setFont(theme::sans(10.5f, true));
         g.drawText(caption, top, juce::Justification::centredLeft);
         if (tag.isNotEmpty())
         {

@@ -8,7 +8,7 @@
 namespace
 {
 constexpr int stateMagic = 0x50484345;
-constexpr int stateVersion = 2;
+constexpr int stateVersion = 3;
 constexpr int historyLimit = 32;
 constexpr int maximumNameBytes = 1024;
 
@@ -30,6 +30,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout parameterLayout()
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { "tempo", 1 }, "Internal Tempo",
                juce::NormalisableRange<float> { 40.0f, 240.0f, 0.1f }, 120.0f,
                juce::AudioParameterFloatAttributes {}.withLabel("BPM")));
+    // v0.3.0
+    const auto percent = juce::AudioParameterFloatAttributes {}.withLabel("%");
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "choke", 1 }, "Choke",
+               juce::StringArray { "Cut", "Gate", "Poly" }, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { "align", 1 }, "Hit Align",
+               juce::NormalisableRange<float> { 0.0f, 100.0f, 1.0f }, 100.0f, percent));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "vintage", 1 }, "Vintage",
+               juce::StringArray { "Clean", "12-bit 40k", "12-bit 26k", "16-bit Warm" }, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { "drive", 1 }, "Drive",
+               juce::NormalisableRange<float> { 0.0f, 100.0f, 1.0f }, 35.0f, percent));
     return layout;
 }
 
@@ -67,6 +77,9 @@ void writeEdit(juce::MemoryOutputStream& out, const chop::Edit& edit)
             out.writeInt(step.pitch);
             out.writeInt(step.reverse ? 1 : 0);
         }
+    out.writeInt(edit.fitAmount);
+    for (const auto pin : edit.anchor)
+        out.writeInt(pin);
 }
 
 bool readEdit(juce::MemoryInputStream& input, chop::Edit& edit, int version)
@@ -99,7 +112,8 @@ bool readEdit(juce::MemoryInputStream& input, chop::Edit& edit, int version)
         || edit.manual.count < 0 || edit.manual.count > chop::maxSlices)
         return false;
     const auto fieldsPerStep = version >= 2 ? 5 : 2;
-    const auto minimumBytes = 4 * (edit.manual.count + 1 + fieldsPerStep * chop::bankCount * chop::stepCount + 1);
+    const auto dovetailFields = version >= 3 ? 1 + chop::bankCount : 0;
+    const auto minimumBytes = 4 * (edit.manual.count + 1 + fieldsPerStep * chop::bankCount * chop::stepCount + dovetailFields + 1);
     if (input.getNumBytesRemaining() < minimumBytes)
         return false;
 
@@ -120,6 +134,65 @@ bool readEdit(juce::MemoryInputStream& input, chop::Edit& edit, int version)
             if (!chop::sanitiseStep(step))
                 return false;
         }
+    if (version >= 3)
+    {
+        edit.fitAmount = input.readInt();
+        if (edit.fitAmount < 0 || edit.fitAmount > 100)
+            return false;
+        for (auto& pin : edit.anchor)
+        {
+            pin = input.readInt();
+            if (pin < -1 || pin >= chop::stepCount)
+                return false;
+        }
+    }
+    else
+    {
+        edit.anchor.fill(-1);
+    }
+    return true;
+}
+
+// v3 stores the sample as 24-bit FLAC (scaled so nothing clips) plus its onsets, so FL
+// projects stay small and reopening doesn't have to re-analyse.
+bool writeFlac(juce::MemoryOutputStream& out, const chop::Sample& sample)
+{
+    auto peak = 1.0f;
+    for (int channel = 0; channel < sample.channels; ++channel)
+        for (const auto value : sample.pcm[channel])
+            peak = std::max(peak, std::abs(value));
+    juce::MemoryBlock encoded;
+    {
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream>(encoded, false);
+        juce::FlacAudioFormat flac;
+        auto writer = flac.createWriterFor(stream, juce::AudioFormatWriterOptions {}
+                                                       .withSampleRate(48000.0)
+                                                       .withNumChannels(sample.channels)
+                                                       .withBitsPerSample(24)
+                                                       .withQualityOptionIndex(5));
+        if (writer == nullptr)
+            return false;
+        constexpr int blockSize = 32768;
+        std::vector<float> scaled(static_cast<std::size_t>(blockSize * 2));
+        for (int first = 0; first < sample.length(); first += blockSize)
+        {
+            const auto count = std::min(blockSize, sample.length() - first);
+            std::array<const float*, 2> pointers {};
+            for (int channel = 0; channel < sample.channels; ++channel)
+            {
+                auto* destination = scaled.data() + channel * blockSize;
+                for (int i = 0; i < count; ++i)
+                    destination[i] = sample.pcm[channel][static_cast<std::size_t>(first + i)] / peak;
+                pointers[static_cast<std::size_t>(channel)] = destination;
+            }
+            if (!writer->writeFromFloatArrays(pointers.data(), sample.channels, count))
+                return false;
+        }
+    }
+    out.writeInt(1);
+    out.writeFloat(peak);
+    out.writeInt64(static_cast<juce::int64>(encoded.getSize()));
+    out.write(encoded.getData(), encoded.getSize());
     return true;
 }
 
@@ -134,14 +207,28 @@ void writeSample(juce::MemoryOutputStream& out, const chop::Sample* sample)
     const auto nameSize = static_cast<int>(std::min<std::size_t>(maximumNameBytes, sample->name.size()));
     out.writeInt(nameSize);
     out.write(sample->name.data(), static_cast<std::size_t>(nameSize));
-    for (int channel = 0; channel < sample->channels; ++channel)
+    juce::MemoryOutputStream flac;
+    if (writeFlac(flac, *sample))
+        out.write(flac.getData(), flac.getDataSize());
+    else
     {
-       #if JUCE_BIG_ENDIAN
-        for (const auto value : sample->pcm[channel])
-            out.writeFloat(value);
-       #else
-        out.write(sample->pcm[channel].data(), sample->pcm[channel].size() * sizeof(float));
-       #endif
+        out.writeInt(0);
+        for (int channel = 0; channel < sample->channels; ++channel)
+        {
+           #if JUCE_BIG_ENDIAN
+            for (const auto value : sample->pcm[channel])
+                out.writeFloat(value);
+           #else
+            out.write(sample->pcm[channel].data(), sample->pcm[channel].size() * sizeof(float));
+           #endif
+        }
+    }
+    const auto onsets = static_cast<int>(std::min<std::size_t>(chop::maxOnsets, sample->onsets.size()));
+    out.writeInt(onsets);
+    for (int i = 0; i < onsets; ++i)
+    {
+        out.writeInt(sample->onsets[static_cast<std::size_t>(i)].position);
+        out.writeFloat(sample->onsets[static_cast<std::size_t>(i)].strength);
     }
 }
 
@@ -175,10 +262,40 @@ bool readSample(juce::MemoryInputStream& input, std::shared_ptr<chop::Sample>& d
         input.skipNextBytes(4 * old);
     }
 
-    const auto bytesPerChannel = static_cast<juce::int64>(frames) * static_cast<juce::int64>(sizeof(float));
-    if (input.getNumBytesRemaining() < channels * bytesPerChannel)
+    const auto encoding = version >= 3 ? input.readInt() : 0;
+    if (encoding == 1)
+    {
+        const auto peak = input.readFloat();
+        const auto bytes = input.readInt64();
+        if (!std::isfinite(peak) || peak < 1.0f || peak > 8.01f || bytes <= 0 || bytes > input.getNumBytesRemaining())
+            return false;
+        juce::MemoryBlock encoded;
+        if (input.readIntoMemoryBlock(encoded, static_cast<size_t>(bytes)) != static_cast<std::size_t>(bytes))
+            return false;
+        juce::FlacAudioFormat flac;
+        std::unique_ptr<juce::AudioFormatReader> reader(flac.createReaderFor(new juce::MemoryInputStream(encoded, false), true));
+        if (reader == nullptr || static_cast<int>(reader->numChannels) != channels || reader->lengthInSamples != frames)
+            return false;
+        std::array<float*, 2> pointers {};
+        for (int channel = 0; channel < channels; ++channel)
+        {
+            sample->pcm[channel].resize(static_cast<std::size_t>(frames));
+            pointers[static_cast<std::size_t>(channel)] = sample->pcm[channel].data();
+        }
+        juce::AudioBuffer<float> view(pointers.data(), channels, frames);
+        if (!reader->read(&view, 0, frames, 0, true, channels > 1))
+            return false;
+        for (int channel = 0; channel < channels; ++channel)
+            for (auto& value : sample->pcm[channel])
+                value = safeAudio(value * peak);
+    }
+    else if (encoding != 0)
         return false;
-    for (int channel = 0; channel < channels; ++channel)
+
+    const auto bytesPerChannel = static_cast<juce::int64>(frames) * static_cast<juce::int64>(sizeof(float));
+    if (encoding == 0 && input.getNumBytesRemaining() < channels * bytesPerChannel)
+        return false;
+    for (int channel = 0; channel < channels && encoding == 0; ++channel)
     {
         auto& data = sample->pcm[channel];
         data.resize(static_cast<std::size_t>(frames));
@@ -193,7 +310,28 @@ bool readSample(juce::MemoryInputStream& input, std::shared_ptr<chop::Sample>& d
             value = safeAudio(value);
     }
     chop::buildWaveform(*sample);
-    chop::analyzeTransients(*sample, [] { return false; });
+    auto analysed = false;
+    if (version >= 3)
+    {
+        const auto onsets = input.readInt();
+        if (onsets < 0 || onsets > chop::maxOnsets || input.getNumBytesRemaining() < 8 * onsets)
+            return false;
+        for (int i = 0; i < onsets; ++i)
+        {
+            chop::Onset onset;
+            onset.position = input.readInt();
+            onset.strength = input.readFloat();
+            if (onset.position < 0 || onset.position >= frames || !std::isfinite(onset.strength) || onset.strength < 0.0f)
+                return false;
+            sample->onsets.push_back(onset);
+            sample->strongest = std::max(sample->strongest, onset.strength);
+        }
+        std::sort(sample->onsets.begin(), sample->onsets.end(), [](const auto& a, const auto& b) { return a.position < b.position; });
+        sample->estimatedBpm = chop::estimateLoopBpm(frames, rate);
+        analysed = onsets > 0;
+    }
+    if (!analysed)
+        chop::analyzeTransients(*sample, [] { return false; });
     destination = std::move(sample);
     return true;
 }
@@ -210,6 +348,10 @@ EpsilonChopProcessor::EpsilonChopProcessor()
     fitParameter = parameters.getRawParameterValue("fit");
     rootParameter = parameters.getRawParameterValue("root");
     tempoParameter = parameters.getRawParameterValue("tempo");
+    chokeParameter = parameters.getRawParameterValue("choke");
+    alignParameter = parameters.getRawParameterValue("align");
+    vintageParameter = parameters.getRawParameterValue("vintage");
+    driveParameter = parameters.getRawParameterValue("drive");
     history.reserve(historyLimit);
     auto initial = std::make_unique<chop::Session>();
     initial->edit = chop::defaultEdit();
@@ -300,7 +442,12 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     settings.tempoFit = fitParameter->load(std::memory_order_relaxed) >= 0.5f;
     settings.fallbackBpm = tempoParameter->load(std::memory_order_relaxed);
     settings.gain = juce::Decibels::decibelsToGain(outputParameter->load(std::memory_order_relaxed));
+    settings.choke = static_cast<chop::Choke>(juce::jlimit(0, chop::chokeCount - 1, juce::roundToInt(chokeParameter->load(std::memory_order_relaxed))));
+    settings.align = alignParameter->load(std::memory_order_relaxed) * 0.01f;
+    settings.vintage = static_cast<chop::Vintage>(juce::jlimit(0, chop::vintageCount - 1, juce::roundToInt(vintageParameter->load(std::memory_order_relaxed))));
+    settings.drive = driveParameter->load(std::memory_order_relaxed) * 0.01f;
     engine.beginBlock(*current, transport, settings, frames);
+    const auto aligned = settings.align > 0.0f;
 
     const auto request = previewRequest.exchange(-1, std::memory_order_relaxed);
     if (request == -2)
@@ -313,6 +460,25 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 
     const auto root = juce::roundToInt(rootParameter->load(std::memory_order_relaxed));
     const auto chops = current->slices.count;
+
+    // Computer keyboard hits from the editor
+    {
+        const auto scope = keyFifo.read(keyFifo.getNumReady());
+        auto handle = [&](int start, int size)
+        {
+            for (int i = start; i < start + size; ++i)
+            {
+                const auto code = keyEvents[static_cast<std::size_t>(i)];
+                const auto chopIndex = std::abs(code) - 1;
+                if (code > 0 && chopIndex < chops)
+                    engine.trigger(chopIndex, 1.0f, chop::VoiceOrigin::keys, 0, 0, false, chopIndex, aligned);
+                else if (code < 0)
+                    engine.noteOff(chop::VoiceOrigin::keys, chopIndex);
+            }
+        };
+        handle(scope.startIndex1, scope.blockSize1);
+        handle(scope.startIndex2, scope.blockSize2);
+    }
     auto* left = buffer.getWritePointer(0);
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
     auto event = midi.begin();
@@ -328,9 +494,13 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             if (statusByte == 0x90 && message.data[2] != 0 && chops > 0)
             {
                 // Every key plays a chop: the root note is Chop 1 and the map wraps around.
+                // Notes can't start early, so Hit Align starts the chop at its attack.
                 const auto offset = static_cast<int>(message.data[1]) - root;
-                engine.trigger(((offset % chops) + chops) % chops, message.data[2] / 127.0f, chop::VoiceOrigin::midi);
+                engine.trigger(((offset % chops) + chops) % chops, message.data[2] / 127.0f, chop::VoiceOrigin::midi,
+                               0, 0, false, message.data[1], aligned);
             }
+            else if (statusByte == 0x80 || (statusByte == 0x90 && message.data[2] == 0))
+                engine.noteOff(chop::VoiceOrigin::midi, message.data[1]);
             else if (statusByte == 0xb0 && (message.data[1] == 120 || message.data[1] == 123))
                 engine.stop(chop::VoiceOrigin::midi);
         }
@@ -365,6 +535,18 @@ void EpsilonChopProcessor::publishLocked(std::unique_ptr<chop::Session> session)
 {
     session->revision = ++revision;
     session->slices = session->sample != nullptr ? chop::makeSlices(*session->sample, session->edit) : chop::Slices {};
+    // Dovetail fingerprints depend only on the sample and where it's cut.
+    const auto* previous = published.load();
+    const auto sameCuts = previous != nullptr && previous->fit != nullptr && previous->sample == session->sample
+                          && previous->slices.count == session->slices.count
+                          && std::equal(previous->slices.edge.begin(), previous->slices.edge.begin() + previous->slices.count + 1,
+                                        session->slices.edge.begin());
+    if (session->sample == nullptr)
+        session->fit = nullptr;
+    else if (sameCuts)
+        session->fit = previous->fit;
+    else
+        session->fit = chop::buildFitTable(*session->sample, session->slices);
     auto* next = session.get();
     snapshots.push_back(std::move(session));
     published.store(next);
@@ -381,7 +563,22 @@ void EpsilonChopProcessor::setStatusLocked(juce::String message)
 EpsilonChopProcessor::EditorState EpsilonChopProcessor::editorState() const
 {
     const std::lock_guard<std::mutex> lock(mutex);
-    return { *published.load(), status, !history.empty(), loading, lastRoll };
+    const auto* current = published.load();
+    return { *current, status, canUndoLocked(current->edit.bank), loading, lastRoll };
+}
+
+bool EpsilonChopProcessor::canUndoLocked(int bank) const
+{
+    return std::any_of(history.begin(), history.end(), [bank](const auto& entry) { return !entry.patternOnly || entry.bank == bank; });
+}
+
+void EpsilonChopProcessor::pushKey(int code) noexcept
+{
+    const auto scope = keyFifo.write(1);
+    if (scope.blockSize1 > 0)
+        keyEvents[static_cast<std::size_t>(scope.startIndex1)] = code;
+    else if (scope.blockSize2 > 0)
+        keyEvents[static_cast<std::size_t>(scope.startIndex2)] = code;
 }
 
 void EpsilonChopProcessor::loadFile(const juce::File& file)
@@ -478,9 +675,16 @@ void EpsilonChopProcessor::edit(const Mutation& change, bool remember)
         return;
     if (remember)
     {
+        const auto& before = current->edit;
+        const auto& after = next->edit;
+        const auto sameChops = before.mode == after.mode && before.density == after.density
+            && before.sensitivity == after.sensitivity && before.beatDivision == after.beatDivision
+            && before.sampleBpmTenths == after.sampleBpmTenths && before.snapZero == after.snapZero
+            && before.chopSeed == after.chopSeed && before.manual.count == after.manual.count
+            && std::equal(before.manual.edge.begin(), before.manual.edge.begin() + before.manual.count + 1, after.manual.edge.begin());
         if (history.size() == historyLimit)
             history.erase(history.begin());
-        history.push_back(current->edit);
+        history.push_back({ before, before.bank, sameChops });
     }
     publishLocked(std::move(next));
 }
@@ -615,10 +819,25 @@ void EpsilonChopProcessor::randomize()
     edit([this](auto& state)
     {
         std::vector<chop::Swap> swaps;
+        std::vector<int> chain;
         bool shuffled = false;
+        chop::FitContext fit;
+        fit.table = state.fit.get();
+        fit.anchor = state.edit.anchor[static_cast<std::size_t>(state.edit.bank)];
+        fit.amount = state.edit.fitAmount;
         const auto changed = chop::randomizePattern(state.edit.patterns[state.edit.bank], std::max(1, state.slices.count),
-                                                    state.edit.randomFlags, state.edit.chaos, state.seed, &swaps, &shuffled);
+                                                    state.edit.randomFlags, state.edit.chaos, state.seed, &swaps, &shuffled,
+                                                    &fit, &chain);
         // Called under the mutex: describe the roll so the editor can show what moved.
+        if (!chain.empty())
+        {
+            juce::StringArray links;
+            for (std::size_t i = 0; i < chain.size() && i < 9; ++i)
+                links.add(juce::String(chain[i] + 1).paddedLeft('0', 2));
+            lastRoll = "Dovetail " + links.joinIntoString(juce::String::fromUTF8(" \u2192 "))
+                       + (chain.size() > 9 ? juce::String::fromUTF8(" \u2026") : juce::String());
+            return changed;
+        }
         juce::StringArray parts;
         if (shuffled)
             parts.add("Every chop shuffled");
@@ -656,14 +875,64 @@ void EpsilonChopProcessor::setChaos(int chaos)
     }, false);
 }
 
+void EpsilonChopProcessor::setFitAmount(int amount)
+{
+    edit([amount](auto& state)
+    {
+        const auto clamped = juce::jlimit(0, 100, amount);
+        if (state.edit.fitAmount == clamped)
+            return false;
+        state.edit.fitAmount = clamped;
+        return true;
+    }, false);
+}
+
+void EpsilonChopProcessor::togglePin(int step)
+{
+    edit([step](auto& state)
+    {
+        if (step < 0 || step >= chop::stepCount)
+            return false;
+        auto& pin = state.edit.anchor[static_cast<std::size_t>(state.edit.bank)];
+        if (pin == step)
+            pin = -1;
+        else if (state.edit.patterns[static_cast<std::size_t>(state.edit.bank)][static_cast<std::size_t>(step)].slice >= 0)
+            pin = step;
+        else
+            return false;
+        return true;
+    }, false);
+}
+
+// Undo works per bank: a pattern edit is undone only from the bank it was made in,
+// and chop edits (mode, cuts, BPM) from anywhere. Bank, Chaos, toggles and pins stay.
 void EpsilonChopProcessor::undo()
 {
     const std::lock_guard<std::mutex> lock(mutex);
-    if (history.empty())
-        return;
     auto next = std::make_unique<chop::Session>(*published.load());
-    next->edit = history.back();
-    history.pop_back();
+    const auto bank = next->edit.bank;
+    const auto found = std::find_if(history.rbegin(), history.rend(),
+                                    [bank](const auto& entry) { return !entry.patternOnly || entry.bank == bank; });
+    if (found == history.rend())
+        return;
+    const auto& entry = *found;
+    if (entry.patternOnly)
+        next->edit.patterns[static_cast<std::size_t>(bank)] = entry.edit.patterns[static_cast<std::size_t>(bank)];
+    else
+    {
+        auto restored = entry.edit;
+        restored.bank = bank;
+        restored.randomFlags = next->edit.randomFlags;
+        restored.chaos = next->edit.chaos;
+        restored.fitAmount = next->edit.fitAmount;
+        restored.anchor = next->edit.anchor;
+        // Other banks keep any later edits that have their own undo entries.
+        for (int b = 0; b < chop::bankCount; ++b)
+            if (b != entry.bank)
+                restored.patterns[static_cast<std::size_t>(b)] = next->edit.patterns[static_cast<std::size_t>(b)];
+        next->edit = restored;
+    }
+    history.erase(std::next(found).base());
     lastRoll = {};
     publishLocked(std::move(next));
 }
@@ -783,6 +1052,18 @@ void EpsilonChopProcessor::setStateInformation(const void* data, int size)
         auto* output = parameters.getParameter("output");
         output->setValueNotifyingHost(output->convertTo0to1(gain));
         parameters.getParameter("pattern")->setValueNotifyingHost(static_cast<float>(run));
+        if (version < 3)
+        {
+            // Projects from v0.1/v0.2 keep sounding exactly as they did.
+            auto set = [this](const char* id, float plain)
+            {
+                auto* parameter = parameters.getParameter(id);
+                parameter->setValueNotifyingHost(parameter->convertTo0to1(plain));
+            };
+            set("choke", 1.0f);
+            set("align", 0.0f);
+            set("vintage", 0.0f);
+        }
     }
     catch (const std::exception&)
     {

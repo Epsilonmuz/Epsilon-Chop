@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonChop VERSION 0.2.0 LANGUAGES C CXX)
+project(EpsilonChop VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 
@@ -11,14 +11,14 @@ if(APPLE)
 endif()
 
 juce_add_plugin(EpsilonChop
-    VERSION 0.2.0
+    VERSION 0.3.0
     COMPANY_NAME "Epsilon Sounds"
     BUNDLE_ID com.epsilonsounds.chop
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
     PLUGIN_MANUFACTURER_CODE EpsS
     PLUGIN_CODE EpCh

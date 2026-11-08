@@ -46,3 +46,13 @@ The rest of the visual system:
   - all parameters
 
   It ends with an end marker, so a truncated chunk is rejected. v1 chunks from v0.1.0 are still read.
+
+## v0.3.0: Dovetail, Hit Align, Choke and Vintage
+
+These came out of a review meeting (senior C++ engineer, product marketer, UI designer, QA) on v0.2.0 and two ideas from Edison.
+
+- **Dovetail** ("perfect fit chop"). Every chop gets a head print (60 ms from its attack) and a tail print (its last 80 ms): a 12-note pitch-class profile, RMS level and spectral centroid from a 4096-point FFT. A join A→B costs `0.40·key + 0.25·level jump + 0.20·tone jump + 0.15·drift from the pinned chop's key`, with a stutter penalty for A→A and a bonus for the recording's own A→A+1. Each term is measured *as played* (reverse swaps head and tail, pitch rotates the profile) and divided by the same term averaged over the sample's natural joins, so the scale is learned from the recording. The chain after the pinned step is drawn from `p ∝ exp(−Fit·cost / T(Chaos))` by forward filtering and backward sampling, including the seam back into the pinned step: exact whole-loop sampling, no greedy dead ends. Join-aware sequencing exists in concatenative synthesis and the Infinite Jukebox; as far as we know none of Fruity Slicer, MPC Chop Shop, Serato Sample or Simpler does it. Verify before claiming "first".
+- **Hit Align** (Edison: "if the chop is 3 ms in until it hits, the engine needs to make up for it"). A 0.5 ms peak envelope over the first 30 ms of each chop finds the block with the biggest jump; the hit point is where that block first reaches a quarter of its level. The sequencer looks ahead (≤ 60 ms, ≤ half the shortest step) and schedules each hit early by its own lead, so attacks land on the grid. Live hits skip the lead-in instead.
+- **CHOKE: CUT** reproduces FL Studio's "Cut by 1" on every pad, which Edison liked: hits ring until the next one cuts them.
+- **VINTAGE.** Input saturation (tanh) → zero-order hold at 40 / 26.04 / 44.1 kHz with no anti-alias filter → 12 / 16-bit rounding → 90 Hz low shelf → two-stage low-pass. On the mixed output, so cost doesn't scale with voices.
+- **UI.** The ribbon stays the hero: the pinned step is a keystone, joins glow by fit. Hit markers on the waveform and a tick in each cell show Hit Align. Minimum caption size went up a point; the window grew 100 px for the SOUND panel.

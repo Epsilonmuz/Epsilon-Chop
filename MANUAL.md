@@ -1,8 +1,8 @@
-# Epsilon Chop v0.2.0 · User Manual
+# Epsilon Chop v0.3.0 · User Manual
 
 **Epsilon Sounds · Sample chopper instrument · VST3 / AU / Standalone**
 
-Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step **arrangement**. You can play the arrangement on its own clock or locked to FL Studio, flip it with **RANDOMIZE**, and play any chop from the Piano Roll.
+Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step **arrangement**. You can play the arrangement on its own clock or locked to FL Studio, flip it with **RANDOMIZE**, pin a chop and let **Dovetail** build the rest around it, and play any chop from the Piano Roll or your computer keyboard. **Hit Align** keeps every hit in the pocket, **CUT** choke works like FL's "Cut by 1", and the **VINTAGE** section adds classic 12-bit sampler character.
 
 ![Epsilon Chop](preview.png)
 
@@ -16,10 +16,12 @@ Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step 
 6. [Variation (RANDOMIZE)](#6-variation-randomize)
 7. [Step inspector](#7-step-inspector)
 8. [MIDI and the Piano Roll](#8-midi-and-the-piano-roll)
-9. [Automation parameters](#9-automation-parameters)
-10. [Under the hood](#10-under-the-hood)
-11. [Workflows](#11-workflows)
-12. [Troubleshooting](#12-troubleshooting)
+9. [Sound: Vintage, Choke and Hit Align](#9-sound-vintage-choke-and-hit-align)
+10. [Computer keyboard](#10-computer-keyboard)
+11. [Automation parameters](#11-automation-parameters)
+12. [Under the hood](#12-under-the-hood)
+13. [Workflows](#13-workflows)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -30,6 +32,8 @@ Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step 
 3. Click **IN ORDER**, then **PLAY**. You hear the loop rebuilt from its chops.
 4. Press **RANDOMIZE**. Chops trade places, and the readout under the button tells you which ones (for example `Swapped 11 ↔ 13`). If PLAY is off, it starts by itself so you hear the flip immediately.
 5. If you like the result, keep it, or copy it to bank **B** and keep rolling in **A**. If you don't like it, click **UNDO**.
+6. Found one chop you love? Click its step, press **PIN**, and roll again. **Dovetail** picks every other chop so it flows out of the one before it, and the readout shows the chain (for example `Dovetail 01 → 09 → 07 → 06`).
+7. Click anywhere in the plugin and play chops from your keyboard: **1–0** are chops 1–10, **Q–P** are 11–20.
 
 ---
 
@@ -172,21 +176,38 @@ Sets how big each roll is. 0% makes the smallest possible change, which acts lik
 
 Notes:
 
-- With STUTTER, REVERSE or PITCH on, *every* hit is re-rolled for that property. Turn a toggle off to keep the values you set by hand.
+- **CHAOS is the chance that each hit is re-rolled at all** for STUTTER, REVERSE, PITCH and GATE (v0.3). At low CHAOS most of what you set by hand stays; at 100% every hit is re-rolled. Turn a toggle off to keep the values completely.
+- Swaps never share a chop (v0.3), so the readout is exactly what happened: `11 ↔ 13   04 ↔ 07` means those two pairs traded places, nothing else.
 - If the bank is empty, RANDOMIZE writes a new 5–9 hit phrase.
 - If a roll happens to change nothing, one swap is forced, so the button always does something.
 - The random sequence is seeded and saved with your project. Undoing and rolling again from the same point gives a new result.
 
+### DOVETAIL (pin a step, then roll)
+
+Dovetail is the "perfect fit" mode. **PIN** a step (in the STEP panel) and press **RANDOMIZE**: the pinned step never changes, and every other hit gets the chop that best *continues* the one before it, all the way round the bar and back into the pinned step, so the loop point fits too.
+
+How "fit" is judged, for every possible join of chop A into chop B:
+
+- **Key.** The notes at the end of A against the notes at the start of B (a 12-note pitch-class profile), and B against the pinned chop, so the whole flip stays in one key.
+- **Loudness.** How much the level jumps at the join.
+- **Tone.** How much brighter or darker B starts than A ends.
+- **As played.** Each step is scored the way it actually sounds: a reversed step swaps its start and end, and a pitched step is transposed.
+- **Learned from your sample.** Every term is compared with the joins your recording already makes (chop 1 into 2, 2 into 3 …), so "fits" means "flows the way this sample flows". The sample's own next chop always counts as a good fit; a chop straight into itself counts as a stutter, not a flip.
+
+The **DOVETAIL** knob sets how strict the fit is (0% = off, plain RANDOMIZE). **CHAOS** sets how adventurous it is: at low CHAOS you get the best-fitting chain almost every time, at high CHAOS it explores looser fits. The whole chain is chosen at once, so it never paints itself into a corner by step 6.
+
+On the arrangement, the pinned step has a white **keystone** border and a pin. Every join shows how well it fits: neighbouring cells lock together with a bridge that glows brighter the better the fit, and a join across rests shows a notch on the incoming cell. RHYTHM, STUTTER and the other toggles still work with a pin; they just never touch the pinned step. PIN is per bank.
+
 ### UNDO
 
-Steps back through the last **32** edits:
+Steps back through the last **32** edits. **Undo is per bank** (v0.3): a roll or step edit in bank A is only undone while you're in bank A, so switching banks never makes UNDO change a pattern you're not looking at. Chop-layout edits (mode, cuts, LOOP BPM) can be undone from any bank. The undoable edits are:
 
 - chop mode and cut changes
 - grooves, IN ORDER and CLEAR
 - step edits
 - rolls
 
-It does **not** undo bank switching, the randomizer toggles or CHAOS, because those are settings rather than content. Loading a new sample clears the history.
+It does **not** undo bank switching, the randomizer toggles, CHAOS, DOVETAIL or PIN, because those are settings rather than content. Loading a new sample clears the history.
 
 ---
 
@@ -202,8 +223,9 @@ Edits the **selected step**: the one with the white outline.
 | **GATE** | 10–100% of the step length. The hit is cut off with a 2 ms fade after this time. A chop shorter than the gate simply ends naturally. With ratchets, the gate applies to each repeat. |
 | **PITCH** | −12 to +12 semitones, by resampling, so up is shorter and brighter and down is longer and darker. Double-click for 0. |
 | **RATCHET** | 1–4 equal repeats inside the step. Repeats after the first play at 82% level, so they sit behind the main hit. |
-| **REVERSE** | Plays the chop from its end back to its start. |
+| **REV** | Plays the chop from its end back to its start. |
 | **REST** | Toggles the step between a rest and a hit. A new hit uses the selected chop. |
+| **PIN** | Pins this step for Dovetail: RANDOMIZE never changes it and builds the bank around it. Click again to unpin. Only a hit can be pinned. |
 
 Knob drags are recorded as one undo step per drag.
 
@@ -214,14 +236,65 @@ Knob drags are recorded as one undo step per drag.
 - **MIDI ROOT** (footer) sets which note plays **Chop 01**. The range is C1–C7 (MIDI 24–96) and the default is **C5** (MIDI 60). That is the note FL Studio's Channel Rack step sequencer plays, so a new channel makes sound straight away.
 - Each key up plays the next chop, and the map **wraps**. With 8 chops, C5–G5 play chops 1–8, G#5 plays chop 1 again, and B4 plays chop 8. Every key plays something.
 - **Velocity** sets the hit level.
-- MIDI hits play the chop plainly. Step pitch, reverse, ratchet and gate belong to the arrangement only. A MIDI note plays the chop to its end or until the next hit.
-- Playback is **mono with choke**: a new hit (MIDI or pattern) fades the previous one out over 2 ms. That's the classic MPC chop behaviour.
+- MIDI hits play the chop plainly. Step pitch, reverse, ratchet and gate belong to the arrangement only.
+- How a note ends depends on **CHOKE** (section 9). In **CUT** and **POLY** a note plays the chop to its end or until a hit cuts it, like a pad. In **GATE**, releasing the key ends the chop, so Piano Roll note lengths count.
+- With **HIT ALIGN** on, a note starts the chop right at its attack, so a chop with a few ms of lead-in still sounds exactly on the note.
 - **All Notes Off** (CC 120/123) silences MIDI hits.
 - Note names follow FL Studio, where middle C is C5.
 
 ---
 
-## 9. Automation parameters
+## 9. Sound: Vintage, Choke and Hit Align
+
+The bottom panel.
+
+### VINTAGE and DRIVE
+
+The character of classic hardware samplers, applied to everything Epsilon Chop plays.
+
+| Mode | Sound |
+| --- | --- |
+| **CLEAN** | Off. Exactly the sample. |
+| **12-BIT 40K** | Punchy and warm, in the spirit of the late-'80s drum samplers: 40 kHz, 12-bit converter, a soft reconstruction filter and extra low-end weight. |
+| **12-BIT 26K** | Gritty, in the spirit of the classic 26 kHz 12-bit beat machine: no anti-alias filter, so high frequencies fold back as grit. |
+| **16-BIT WARM** | Clean but rounded, in the spirit of the early-'90s 16-bit samplers: 44.1 kHz, 16-bit, gentle top-end roll-off and a little low-end. |
+
+**DRIVE** sets how hard the sound hits the analogue input stage before the converter: low settings add weight, high settings saturate and compress.
+
+Under the hood: soft saturation (input stage) → sample-and-hold at the machine's rate → quantising to 12 or 16 bits → low shelf at 90 Hz → two-stage low-pass (output stage). It runs on the mixed output, so it costs the same however many hits are playing.
+
+### CHOKE
+
+| Mode | Behaviour |
+| --- | --- |
+| **CUT** (default) | Like setting every pad to **"Cut by 1"** in FL Studio: each hit cuts the last one and rings until the next, so every hit flows into the next with no gaps. A step at 100% gate rings past the end of its step; a lower gate still shortens it. |
+| **GATE** | v0.2 behaviour: each hit stops at its step gate, and MIDI and keyboard notes stop when you let go. |
+| **POLY** | Hits ring over each other. A chop only cuts itself. |
+
+Every cut uses a 2 ms fade, so nothing clicks.
+
+### HIT ALIGN
+
+Most cuts don't land exactly on the hit: there's often a few ms of lead-in (a breath, a pickup, room noise, the zero-crossing snap) before the attack. When chops trade places, those different delays make a flip sound slightly drunk even though every step starts on the grid.
+
+Hit Align measures each chop's **hit point** (how many ms after its cut the attack really starts; you'll see a small marker on the waveform and a tick in each step cell) and **starts the chop that much early**, so every attack lands exactly on the grid whatever chop goes where. The sequencer knows when every step is coming, so it can do this without adding any latency. MIDI and keyboard hits can't start before you play them, so they start right at the attack instead.
+
+100% fully compensates (within a fraction of a millisecond). Lower it to keep some of the natural looseness. 0% is v0.2 timing. Compensation is at most 60 ms, and reversed steps play as cut.
+
+---
+
+## 10. Computer keyboard
+
+Click anywhere in the plugin window to give it the keyboard, then:
+
+- **1, 2 … 9, 0** play chops **01–10**.
+- **Q, W … O, P** play chops **11–20**.
+
+The key letter is shown next to each chop number on the waveform. Keys follow CHOKE (in GATE mode, letting go ends the chop) and HIT ALIGN. Holding a key doesn't retrigger. If FL Studio grabs the keys instead, click the plugin window again, or turn off FL's *Typing keyboard to piano roll* while you play.
+
+---
+
+## 11. Automation parameters
 
 | Parameter | Range | Default |
 | --- | --- | --- |
@@ -232,12 +305,18 @@ Knob drags are recorded as one undo step per drag.
 | Tempo Fit | Off / On | Off |
 | Root Note | 24 … 96 | 60 (C5) |
 | Internal Tempo | 40 … 240 BPM | 120 |
+| Choke | Cut, Gate, Poly | Cut |
+| Hit Align | 0 … 100 % | 100 % |
+| Vintage | Clean, 12-bit 40k, 12-bit 26k, 16-bit Warm | Clean |
+| Drive | 0 … 100 % | 35 % |
+
+Projects saved with v0.1 or v0.2 open with Choke = Gate, Hit Align = 0 and Vintage = Clean, so they sound exactly as before.
 
 Chop settings, patterns and randomizer settings are saved with the project, but they are not automatable.
 
 ---
 
-## 10. Under the hood
+## 12. Under the hood
 
 ### Loading and analysis (background thread)
 
@@ -267,8 +346,10 @@ Chop settings, patterns and randomizer settings are saved with the project, but 
 
 ### Voices and sound
 
-- **Voices:** mono choke playback using a pool of 8 voices, so fading voices can overlap the new hit for clean transitions.
-- **Fades:** every voice has a 2 ms smooth fade in and out (shorter for tiny chops), plus a 2 ms choke fade.
+- **Voices:** a pool of 16 voices. In CUT and GATE each hit fades the last one out over 2 ms; in POLY they overlap.
+- **Fades:** a 0.3 ms fade-in, so attacks stay sharp, and a 2 ms fade-out at the end, the gate and every choke.
+- **Cuts and attacks.** ZERO-X now only moves a cut *backwards* (up to 2 ms) onto a zero crossing, so a cut placed on an attack never lands after it. Hit Align then measures the attack with a 0.5 ms peak envelope over the first 30 ms of each chop: the attack is the block with the biggest jump over what came before it.
+- **Look-ahead.** The sequencer looks up to 60 ms (never more than half the shortest step) ahead, so a chop with lead-in can start early and its hit lands on the grid.
 - **Resampling.** A 32-tap Blackman-windowed sinc interpolator with 64 sub-sample phases handles three cases:
   - a sample rate that differs from FL's
   - step pitch
@@ -300,11 +381,11 @@ The project stores:
 - the randomizer settings and seed
 - every parameter
 
-A long stereo sample adds roughly 4 bytes × channels × frames, which is about 23 MB per minute of 48 kHz stereo. Saved data ends with a check marker, and damaged data is ignored instead of loading garbage. Sessions from v0.1.0 still open.
+Since v0.3 the sample is stored as **24-bit FLAC** (scaled so nothing clips), together with its analysed hits, so projects are roughly half the size or less and reopen without re-analysing. PINs and the DOVETAIL amount are saved too. Saved data ends with a check marker, and damaged data is ignored instead of loading garbage. Sessions from v0.1 and v0.2 still open.
 
 ---
 
-## 11. Workflows
+## 13. Workflows
 
 **Flip a loop, keep the groove**
 
@@ -326,15 +407,28 @@ A long stereo sample adds roughly 4 bytes × channels × frames, which is about 
 2. Use **SWAP + PITCH + REVERSE** at 40%.
 3. Shorten the gates for stabs.
 
+**Build a flip around one chop (Dovetail)**
+
+1. Chop the sample, click **IN ORDER**, press **PLAY**.
+2. Click the step with the chop you love and press **PIN**.
+3. Set **DOVETAIL** to 70–100% and **CHAOS** low (10–30%) for smooth, in-key flips; raise CHAOS for wilder ones.
+4. Leave **SWAP** or **RHYTHM** on and roll. Each roll keeps the pinned chop and fits everything else around it.
+
+**Dusty MPC-style drums**
+
+1. **TRANSIENT** chops, **CHOKE: CUT**, **HIT ALIGN** 100%.
+2. **VINTAGE: 12-BIT 40K** with DRIVE around 40%, or **12-BIT 26K** for grit.
+3. **SWING** 15–25% at 1/16.
+
 **Play it yourself**
 
 1. Turn HOST SYNC off.
 2. Click **IN ORDER** to see which chop is which.
-3. Play from C5 upward in the Piano Roll. Every key plays a chop.
+3. Click the plugin and finger-drum on **1–0 / Q–P**, or play from C5 upward in the Piano Roll. Every key plays a chop.
 
 ---
 
-## 12. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
@@ -342,6 +436,9 @@ A long stereo sample adds roughly 4 bytes × channels × frames, which is about 
 | **Sound cuts out when FL is stopped** | FL's *Smart disable* can put idle generators to sleep. Turn it off for this channel in the plugin wrapper's options menu (the ▼ at its top-left) → *Smart disable*. |
 | **Everything sounds sped up or chipmunked** | TEMPO FIT is on and LOOP BPM is wrong. Drag LOOP BPM to the loop's real tempo, often double or half the detected value. |
 | **Clicks at chop starts** | Turn **ZERO-X** on. In Manual, nudge the cut onto a quiet point. |
+| **Number keys don't play chops** | Click inside the plugin window first. If FL still takes the keys, turn off *Typing keyboard to piano roll* in FL. |
+| **Hits ring into each other** | That's **CHOKE: CUT** with a 100% gate. Lower the step gate, or switch CHOKE to **GATE**. |
+| **The flip sounds early or late** | Check HIT ALIGN is at 100%. If a chop's hit marker is in the wrong place, nudge the cut in Manual so the attack is near the start. |
 | **Beat chops are in the wrong places** | Fix **LOOP BPM** first. Beat mode divides by it. |
 | **Pattern starts mid-bar with HOST SYNC** | That's expected: the pattern follows FL's position. Step 1 is always on the bar line. |
 | **macOS says the plug-in is damaged** (CI downloads) | Run the `xattr -dr com.apple.quarantine` commands in `INSTALL.txt`. |

@@ -291,6 +291,17 @@ void run(const char* previewFolder)
     require(state.session.edit.patterns[1] == randomized, "undo restores the previous roll");
     require(state.session.edit.patterns[0] == otherBank, "bank edits remain isolated");
 
+    // v0.3: undo is per bank. A roll on bank B is never undone from bank A.
+    processor.randomize();
+    const auto rolledB = processor.editorState().session.edit.patterns[1];
+    processor.setBank(0);
+    processor.undo();
+    processor.setBank(1);
+    require(processor.editorState().session.edit.patterns[1] == rolledB, "undo on another bank leaves this bank's roll alone");
+    processor.undo();
+    require(processor.editorState().session.edit.patterns[1] == randomized, "undo from the bank itself reverts its roll");
+    state = processor.editorState();
+
     // MIDI: C5 (60) is chop 1 by default and every key wraps onto a chop.
     renderNote(processor, 60);
     renderNote(processor, 36);
@@ -310,22 +321,66 @@ void run(const char* previewFolder)
             && restoredState.session.edit.patterns[1] == randomized, "restore embedded sample and banks");
     require(restoredState.session.slices.edge == state.session.slices.edge, "restore marker locations");
     const auto actual = renderNote(restored, 61);
+    // v0.3 embeds the sample as 24-bit FLAC: the restore matches to within 24-bit resolution.
     for (int channel = 0; channel < 2; ++channel)
-        require(std::equal(reference.getReadPointer(channel), reference.getReadPointer(channel) + 512,
-                           actual.getReadPointer(channel)), "restored audio is sample-exact");
+    {
+        auto largest = 0.0f;
+        for (int i = 0; i < 512; ++i)
+            largest = std::max(largest, std::abs(reference.getSample(channel, i) - actual.getSample(channel, i)));
+        require(largest < 2.0e-6f, "restored audio matches to 24-bit resolution");
+    }
+    require(saved.getSize() < 2u * 4u * static_cast<std::size_t>(state.session.sample->length()) * 3u / 4u + 65536u,
+            "FLAC keeps the saved project smaller than raw floats");
 
     restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()) - 1);
     require(restored.editorState().session.revision == restoredState.session.revision, "truncated state is ignored");
     checkVersionOneState();
 
-    std::cout << "Import, chop modes, randomize/undo, MIDI wrap, preview without host, host sync and recall passed.\n";
+    // Dovetail through the processor: pin, roll, save, reload.
+    {
+        const auto before = restored.editorState().session;
+        const auto& bank = before.edit.patterns[static_cast<std::size_t>(before.edit.bank)];
+        int pinned = -1;
+        for (int i = 0; i < chop::stepCount && pinned < 0; ++i)
+            if (bank[static_cast<std::size_t>(i)].slice >= 0) pinned = i;
+        restored.togglePin(pinned);
+        restored.randomize();
+        const auto after = restored.editorState();
+        require(after.session.edit.anchor[static_cast<std::size_t>(after.session.edit.bank)] == pinned, "PIN pins the selected step");
+        require(after.session.edit.patterns[static_cast<std::size_t>(after.session.edit.bank)][static_cast<std::size_t>(pinned)]
+                    == bank[static_cast<std::size_t>(pinned)], "a Dovetail roll keeps the pinned step");
+        require(after.lastRoll.startsWith("Dovetail"), "the readout shows the Dovetail chain");
+        require(after.session.fit != nullptr && after.session.fit->count == after.session.slices.count, "fit table follows the chops");
+        juce::MemoryBlock pinnedState;
+        restored.getStateInformation(pinnedState);
+        EpsilonChopProcessor reopened;
+        reopened.setStateInformation(pinnedState.getData(), static_cast<int>(pinnedState.getSize()));
+        require(reopened.editorState().session.edit.anchor == after.session.edit.anchor
+                    && reopened.editorState().session.edit.fitAmount == after.session.edit.fitAmount, "pins and Fit are saved");
+    }
+
+    // Computer keyboard: key down plays the chop at once, key up ends it in GATE mode.
+    {
+        restored.releaseResources();
+        restored.prepareToPlay(rate, 512);
+        restored.keyDown(0);
+        juce::AudioBuffer<float> audio(2, 512);
+        juce::MidiBuffer midi;
+        restored.processBlock(audio, midi);
+        require(audio.getMagnitude(0, 512) > 0.05f, "a key plays its chop");
+    }
+
+    std::cout << "Import, chop modes, randomize/undo, MIDI wrap, preview without host, host sync, recall, Dovetail and keys passed.\n";
     if (previewFolder != nullptr)
     {
         restored.setMode(chop::SliceMode::grid);
         restored.setDensity(16);
         restored.setBank(0);
         restored.arrangeInOrder();
+        restored.togglePin(0);
         restored.randomize();
+        auto* vintageParameter = restored.parameters.getParameter("vintage");
+        vintageParameter->setValueNotifyingHost(vintageParameter->convertTo0to1(1.0f));
         savePreview(restored, juce::File(juce::String(previewFolder)).getChildFile("preview.png"), true);
         timeEditor(restored);
     }

@@ -1,6 +1,8 @@
 #include "ChopEngine.h"
 
 #include <algorithm>
+#include <array>
+#include <vector>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -307,6 +309,315 @@ void stepFeatures()
 }
 }
 
+
+// ---- v0.3.0 ------------------------------------------------------------------
+
+// Eight 0.25 s chops; chop k is silent for late[k] ms after its cut, then hits hard.
+constexpr std::array<double, 8> lateMs { 0.0, 3.0, 1.0, 6.0, 2.0, 8.0, 4.0, 5.0 };
+
+std::shared_ptr<chop::Sample> makeLateSample()
+{
+    auto sample = std::make_shared<chop::Sample>();
+    sample->sampleRate = rate;
+    sample->channels = 1;
+    const auto chopFrames = static_cast<int>(rate * 0.25);
+    sample->pcm[0].assign(static_cast<std::size_t>(chopFrames * 8), 0.0f);
+    for (int k = 0; k < 8; ++k)
+    {
+        const auto late = static_cast<int>(lateMs[static_cast<std::size_t>(k)] * rate / 1000.0);
+        for (int i = late; i < chopFrames; ++i)
+        {
+            const auto age = (i - late) / rate;
+            sample->pcm[0][static_cast<std::size_t>(k * chopFrames + i)]
+                = static_cast<float>(0.8 * std::exp(-12.0 * age) * std::cos(2.0 * 3.14159265 * 150.0 * age));
+        }
+    }
+    sample->strongest = 1.0f;
+    sample->estimatedBpm = chop::estimateLoopBpm(sample->length(), rate);
+    return sample;
+}
+
+chop::Session sessionFor(std::shared_ptr<chop::Sample> sample)
+{
+    chop::Session session;
+    session.sample = std::move(sample);
+    session.edit = chop::defaultEdit();
+    session.edit.mode = chop::SliceMode::grid;
+    session.edit.density = 8;
+    session.edit.snapZero = false;
+    session.slices = chop::makeSlices(*session.sample, session.edit);
+    session.sampleRevision = 1;
+    return session;
+}
+
+void hitAlign()
+{
+    auto session = sessionFor(makeLateSample());
+    for (int k = 0; k < 8; ++k)
+    {
+        const auto expected = static_cast<int>(lateMs[static_cast<std::size_t>(k)] * rate / 1000.0);
+        require(std::abs(session.slices.hit[static_cast<std::size_t>(k)] - expected) <= 24,
+                "hit measured within 0.5 ms for chop " + std::to_string(k + 1));
+    }
+
+    // Shuffle the chops so late and early ones sit next to each other.
+    chop::Pattern pattern {};
+    constexpr std::array<int, 8> order { 0, 5, 2, 3, 1, 7, 4, 6 };
+    for (int k = 0; k < 8; ++k)
+        pattern[static_cast<std::size_t>(2 * k)] = { order[static_cast<std::size_t>(k)], 100, 1, 0, false };
+    session.edit.patterns[0] = pattern;
+
+    chop::PlaySettings settings;
+    settings.followHost = true;
+    settings.stepsPerQuarter = 4;
+    settings.choke = chop::Choke::cut;
+    const auto stepFrames = static_cast<int>(rate * 0.125);
+    for (const auto align : { 1.0f, 0.0f })
+    {
+        settings.align = align;
+        const auto out = render(session, settings, stepFrames * 16 + 512, 256, true);
+        double worst = 0.0;
+        for (int k = 1; k < 8; ++k)
+        {
+            const auto grid = 2 * k * stepFrames;
+            const auto onset = firstSound(out.left, grid - static_cast<int>(rate * 0.012), 0.05f);
+            worst = std::max(worst, std::abs(static_cast<double>(onset - grid)));
+        }
+        if (align > 0.0f)
+            require(worst <= 0.0006 * rate, "Hit Align lands every hit within 0.6 ms of the grid");
+        else
+            require(worst >= 0.007 * rate, "without Hit Align the late chops drag");
+    }
+
+    // Live hits can't start early, so they start at the attack.
+    chop::Engine engine;
+    engine.prepare(rate);
+    chop::Transport transport;
+    settings.followHost = false;
+    settings.align = 1.0f;
+    engine.beginBlock(session, transport, settings, 4096);
+    engine.trigger(5, 1.0f, chop::VoiceOrigin::midi, 0, 0, false, 60, true);
+    std::vector<float> live(4096);
+    for (int i = 0; i < 4096; ++i)
+    {
+        float r = 0.0f;
+        engine.render(i, live[static_cast<std::size_t>(i)], r);
+    }
+    engine.endBlock();
+    require(firstSound(live, 0, 0.05f) <= static_cast<int>(0.0006 * rate), "an aligned MIDI hit sounds at once");
+}
+
+void chokeModes()
+{
+    auto session = makeSession(chop::SliceMode::grid, 8);
+    chop::Pattern pattern {};
+    pattern[0] = { 0, 40, 1, 0, false };
+    session.edit.patterns[0] = pattern;
+    chop::PlaySettings settings;
+    settings.preview = true;
+    settings.stepsPerQuarter = 2;     // a step is 0.25 s, the whole chop
+    const auto gateEnd = static_cast<int>(rate * 0.25 * 0.4);
+    auto tailEnergy = [&](chop::Choke choke)
+    {
+        settings.choke = choke;
+        const auto out = render(session, settings, static_cast<int>(rate * 0.24), 128, false);
+        double energy = 0.0;
+        for (int i = gateEnd + 200; i < static_cast<int>(out.left.size()); ++i)
+            energy += out.left[static_cast<std::size_t>(i)] * out.left[static_cast<std::size_t>(i)];
+        return energy;
+    };
+    require(tailEnergy(chop::Choke::gate) < 1.0e-9, "GATE stops a hit at its step gate");
+    pattern[0].gate = 100;
+    session.edit.patterns[0] = pattern;
+    require(tailEnergy(chop::Choke::cut) > 1.0e-3, "CUT lets a full-gate hit ring until something cuts it");
+
+    // POLY: a second hit doesn't cut the first.
+    auto twoHits = [&](chop::Choke choke)
+    {
+        chop::Engine engine;
+        engine.prepare(rate);
+        settings.preview = false;
+        settings.choke = choke;
+        engine.beginBlock(session, chop::Transport {}, settings, 4000);
+        std::vector<float> out(4000);
+        for (int i = 0; i < 4000; ++i)
+        {
+            if (i == 0) engine.trigger(0, 1.0f, chop::VoiceOrigin::midi, 0, 0, false, 60);
+            if (i == 500) engine.trigger(3, 1.0f, chop::VoiceOrigin::midi, 0, 0, false, 63);
+            if (i == 2000) engine.noteOff(chop::VoiceOrigin::midi, 63);
+            float r = 0.0f;
+            engine.render(i, out[static_cast<std::size_t>(i)], r);
+        }
+        engine.endBlock();
+        return out;
+    };
+    const auto cut = twoHits(chop::Choke::cut), poly = twoHits(chop::Choke::poly), gate = twoHits(chop::Choke::gate);
+    double difference = 0.0;
+    for (int i = 1500; i < 1900; ++i)
+        difference += std::abs(cut[static_cast<std::size_t>(i)] - poly[static_cast<std::size_t>(i)]);
+    require(difference > 1.0, "POLY keeps the first hit ringing under the second");
+    require(std::abs(gate[3000]) < 1.0e-6f && std::abs(cut[3000]) > 1.0e-4f, "note-off ends a hit in GATE mode only");
+}
+
+void vintage()
+{
+    auto session = makeSession(chop::SliceMode::grid, 8);
+    chop::PlaySettings settings;
+    settings.preview = true;
+    const auto clean = render(session, settings, 24000, 256, false);
+    for (int mode = 1; mode < chop::vintageCount; ++mode)
+    {
+        settings.vintage = static_cast<chop::Vintage>(mode);
+        settings.drive = 1.0f;
+        const auto coloured = render(session, settings, 24000, 256, false);
+        auto finite = true;
+        auto largest = 0.0f;
+        double difference = 0.0;
+        for (std::size_t i = 0; i < coloured.left.size(); ++i)
+        {
+            finite = finite && std::isfinite(coloured.left[i]);
+            largest = std::max(largest, std::abs(coloured.left[i]));
+            difference += std::abs(coloured.left[i] - clean.left[i]);
+        }
+        require(finite && largest < 1.5f, "vintage mode " + std::to_string(mode) + " stays finite and bounded");
+        require(difference > 1.0, "vintage mode " + std::to_string(mode) + " changes the sound");
+    }
+
+    // The 12-bit converter swallows anything under its last bit.
+    auto quiet = makeSample(1);
+    for (auto& v : quiet->pcm[0]) v *= 1.0e-4f;
+    auto quietSession = makeSession(chop::SliceMode::grid, 8);
+    quietSession.sample = quiet;
+    settings.vintage = chop::Vintage::sixty;
+    settings.drive = 0.0f;
+    const auto out = render(quietSession, settings, 12000, 256, false);
+    require(std::all_of(out.left.begin() + 2000, out.left.end(), [](float v) { return std::abs(v) < 1.0e-6f; }),
+            "12-bit mode truncates sub-LSB signal");
+}
+
+std::shared_ptr<chop::Sample> makeToneSample()
+{
+    // Eight chops, each a steady tone. Chop 6 is the same tone as chop 1.
+    constexpr std::array<double, 8> hz { 220.0, 330.0, 247.0, 392.0, 440.0, 220.0, 523.0, 294.0 };
+    auto sample = std::make_shared<chop::Sample>();
+    sample->sampleRate = rate;
+    sample->channels = 1;
+    const auto chopFrames = static_cast<int>(rate * 0.25);
+    sample->pcm[0].resize(static_cast<std::size_t>(chopFrames * 8));
+    for (int k = 0; k < 8; ++k)
+        for (int i = 0; i < chopFrames; ++i)
+            sample->pcm[0][static_cast<std::size_t>(k * chopFrames + i)]
+                = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265 * hz[static_cast<std::size_t>(k)] * i / rate));
+    sample->strongest = 1.0f;
+    sample->estimatedBpm = chop::estimateLoopBpm(sample->length(), rate);
+    return sample;
+}
+
+double chainCost(const chop::FitTable& table, const chop::Pattern& p, int anchor)
+{
+    std::vector<int> hits;
+    for (int i = 0; i < chop::stepCount; ++i)
+        if (p[static_cast<std::size_t>(i)].slice >= 0) hits.push_back(i);
+    double total = 0.0;
+    for (std::size_t k = 0; k < hits.size(); ++k)
+        total += chop::joinCost(table, p[static_cast<std::size_t>(hits[k])], p[static_cast<std::size_t>(hits[(k + 1) % hits.size()])],
+                                &p[static_cast<std::size_t>(anchor)]);
+    return total;
+}
+
+void dovetail()
+{
+    const auto session = sessionFor(makeToneSample());
+    const auto table = chop::buildFitTable(*session.sample, session.slices);
+    require(table->count == 8, "fit table covers every chop");
+
+    chop::Pattern base {};
+    base[0] = { 0, 100, 1, 0, false };
+    base[4] = { 3, 100, 1, 0, false };
+    base[8] = { 6, 100, 1, 0, false };
+    base[12] = { 2, 100, 1, 0, false };
+
+    chop::FitContext fit;
+    fit.table = table.get();
+    fit.anchor = 0;
+    fit.amount = 100;
+    int twin = 0;
+    double fitted = 0.0, shuffled = 0.0;
+    for (std::uint32_t s = 1; s <= 200; ++s)
+    {
+        auto p = base;
+        auto seed = s * 2654435761u;
+        std::vector<int> chain;
+        chop::randomizePattern(p, 8, chop::randomChops, 10, seed, nullptr, nullptr, &fit, &chain);
+        require(p[0] == base[0], "Dovetail never changes the pinned step");
+        require(chain.size() == 4 && chain[0] == 0, "Dovetail reports the chain from the pinned chop");
+        auto again = base;
+        auto seed2 = s * 2654435761u;
+        chop::randomizePattern(again, 8, chop::randomChops, 10, seed2, nullptr, nullptr, &fit);
+        require(again == p, "Dovetail is repeatable for a seed");
+        if (p[4].slice == 5) ++twin;
+        fitted += chainCost(*table, p, 0);
+
+        auto plain = base;
+        auto seed3 = s * 2654435761u;
+        chop::randomizePattern(plain, 8, chop::randomChops, 100, seed3);
+        shuffled += chainCost(*table, plain, 0);
+    }
+    require(twin >= 120, "the chop identical to the pinned one is placed after it most of the time");
+    require(fitted < shuffled * 0.7, "Dovetail chains fit far better than a shuffle");
+
+    // Fit 0, or no pinned hit, is plain RANDOMIZE.
+    for (const auto amount : { 0, 100 })
+    {
+        auto withFit = base, without = base;
+        auto seedA = 77u, seedB = 77u;
+        chop::FitContext off = fit;
+        off.amount = amount;
+        if (amount > 0)
+            off.anchor = 1;   // a rest: nothing pinned
+        chop::randomizePattern(withFit, 8, chop::randomAll, 60, seedA, nullptr, nullptr, &off);
+        chop::randomizePattern(without, 8, chop::randomAll, 60, seedB);
+        require(withFit == without, "Dovetail is off without a pinned hit or with Fit at 0");
+    }
+
+    // Rhythm and step rolls never touch the pinned step either.
+    for (std::uint32_t s = 1; s <= 50; ++s)
+    {
+        auto p = base;
+        auto seed = s;
+        fit.anchor = 8;
+        chop::randomizePattern(p, 8, chop::randomAll, 100, seed, nullptr, nullptr, &fit);
+        require(p[8] == base[8], "a full roll leaves the pinned step alone");
+    }
+}
+
+void randomizerFixes()
+{
+    // Swaps are disjoint pairs, so the readout is exactly what happened.
+    for (std::uint32_t s = 1; s <= 200; ++s)
+    {
+        auto p = chop::inOrder(16);
+        auto seed = s;
+        std::vector<chop::Swap> swaps;
+        chop::randomizePattern(p, 16, chop::randomChops, 80, seed, &swaps);
+        std::array<int, chop::maxSlices> seen {};
+        for (auto [a, b] : swaps) { ++seen[static_cast<std::size_t>(a)]; ++seen[static_cast<std::size_t>(b)]; }
+        require(std::all_of(seen.begin(), seen.end(), [](int n) { return n <= 1; }), "no chop appears in two swaps");
+    }
+
+    // Low Chaos keeps most hand-set ratchets.
+    int kept = 0, total = 0;
+    for (std::uint32_t s = 1; s <= 100; ++s)
+    {
+        auto p = chop::inOrder(8);
+        for (auto& step : p) if (step.slice >= 0) step.ratchet = 3;
+        auto seed = s;
+        chop::randomizePattern(p, 8, chop::randomStutter, 10, seed);
+        for (const auto& step : p) if (step.slice >= 0) { ++total; kept += step.ratchet == 3 ? 1 : 0; }
+    }
+    require(kept >= total * 8 / 10, "Chaos 10 keeps at least 80% of hand-set ratchets");
+}
+
 int main()
 {
     slicingModes();
@@ -314,6 +625,11 @@ int main()
     internalClock();
     hostSync();
     stepFeatures();
+    hitAlign();
+    chokeModes();
+    vintage();
+    dovetail();
+    randomizerFixes();
     if (failures == 0)
         std::cout << "Engine tests passed\n";
     return failures == 0 ? 0 : 1;

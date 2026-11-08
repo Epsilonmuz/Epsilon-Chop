@@ -74,16 +74,16 @@
  #define JucePlugin_IsMidiEffect           0
 #endif
 #ifndef  JucePlugin_EditorRequiresKeyboardFocus
- #define JucePlugin_EditorRequiresKeyboardFocus  0
+ #define JucePlugin_EditorRequiresKeyboardFocus           1
 #endif
 #ifndef  JucePlugin_Version
- #define JucePlugin_Version                0.2.0
+ #define JucePlugin_Version                0.3.0
 #endif
 #ifndef  JucePlugin_VersionCode
- #define JucePlugin_VersionCode            0x200
+ #define JucePlugin_VersionCode            0x300
 #endif
 #ifndef  JucePlugin_VersionString
- #define JucePlugin_VersionString          "0.2.0"
+ #define JucePlugin_VersionString          "0.3.0"
 #endif
 #ifndef  JucePlugin_VSTUniqueID
  #define JucePlugin_VSTUniqueID            JucePlugin_PluginCode
@@ -158,7 +158,7 @@
  #define JucePlugin_ARAFactoryID           "com.EpsilonSounds.EpsilonChop.factory"
 #endif
 #ifndef  JucePlugin_ARADocumentArchiveID
- #define JucePlugin_ARADocumentArchiveID   "com.EpsilonSounds.EpsilonChop.aradocumentarchive.0.2.0"
+ #define JucePlugin_ARADocumentArchiveID   "com.EpsilonSounds.EpsilonChop.aradocumentarchive.0.3.0"
 #endif
 #ifndef  JucePlugin_ARACompatibleArchiveIDs
  #define JucePlugin_ARACompatibleArchiveIDs  ""

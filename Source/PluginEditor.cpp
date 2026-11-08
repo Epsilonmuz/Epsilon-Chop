@@ -24,6 +24,11 @@ const juce::Rectangle<float> ribbonPanel { 20.0f, 388.0f, 1080.0f, 152.0f };
 const juce::Rectangle<float> transportPanel { 20.0f, 552.0f, 360.0f, 160.0f };
 const juce::Rectangle<float> variationPanel { 392.0f, 552.0f, 360.0f, 160.0f };
 const juce::Rectangle<float> stepPanel { 764.0f, 552.0f, 336.0f, 160.0f };
+const juce::Rectangle<float> soundPanel { 20.0f, 724.0f, 1080.0f, 92.0f };
+
+// Computer keyboard: the number row, then the row under it.
+constexpr std::array<char, 20> chopKeys { '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+                                          'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P' };
 
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& title = {})
 {
@@ -38,7 +43,7 @@ void drawPanel(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     if (title.isNotEmpty())
     {
         g.setColour(faint);
-        g.setFont(sans(9.5f, true));
+        g.setFont(sans(10.5f, true));
         g.drawText(title, juce::Rectangle<float>(r.getX() + 16.0f, r.getY() + 8.0f, 200.0f, 14.0f), juce::Justification::centredLeft);
     }
 }
@@ -46,7 +51,7 @@ void drawPanel(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 void caption(juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r, juce::Justification j = juce::Justification::centredLeft)
 {
     g.setColour(dim);
-    g.setFont(sans(9.5f, true));
+    g.setFont(sans(10.5f, true));
     g.drawText(text, r, j);
 }
 
@@ -170,8 +175,29 @@ void WaveformView::renderCache(juce::Graphics& g, int width, int height) const
             g.setColour(selected ? colour : ink2);
             g.fillRoundedRectangle(tag, 4.0f);
             g.setColour(selected ? ink0 : colour);
-            g.setFont(mono(9.5f));
+            g.setFont(mono(10.0f));
             g.drawText(twoDigits(slice + 1), tag, juce::Justification::centred);
+            if (slice < static_cast<int>(chopKeys.size()) && x1 - x0 > 46.0f)
+            {
+                // The computer key that plays this chop
+                g.setColour(faint);
+                g.setFont(mono(10.0f));
+                g.drawText(juce::String::charToString(chopKeys[static_cast<std::size_t>(slice)]),
+                           juce::Rectangle<float>(tag.getRight() + 3.0f, tag.getY(), 12.0f, tag.getHeight()), juce::Justification::centred);
+            }
+        }
+
+        // Hit Align: where the attack really starts, if it isn't right at the cut
+        const auto hit = state.slices.hit[static_cast<std::size_t>(slice)];
+        if (editor.alignAmount() > 0.0f && hit > 0)
+        {
+            const auto hx = xFor(first + hit);
+            juce::Path marker;
+            marker.addTriangle(hx - 3.5f, top - 6.0f, hx + 3.5f, top - 6.0f, hx, top - 1.0f);
+            g.setColour(colour);
+            g.fillPath(marker);
+            g.setColour(colour.withAlpha(0.35f));
+            g.fillRect(hx - 0.5f, top, 1.0f, bottom - top);
         }
     }
     g.setColour(juce::Colours::white.withAlpha(0.05f));
@@ -222,7 +248,7 @@ void WaveformView::paint(juce::Graphics& g)
     {
         cacheScale = physical;
         cache = juce::Image(juce::Image::ARGB, std::max(1, juce::roundToInt(getWidth() * physical)),
-                            std::max(1, juce::roundToInt(getHeight() * physical)), true, juce::SoftwareImageType());
+                            std::max(1, juce::roundToInt(getHeight() * physical)), true, juce::NativeImageType());
         juce::Graphics cg(cache);
         cg.addTransform(juce::AffineTransform::scale(physical));
         renderCache(cg, getWidth(), getHeight());
@@ -267,6 +293,33 @@ void WaveformView::paint(juce::Graphics& g)
         g.setColour(live);
         g.fillRect(x - 0.75f, top, 1.5f, bottom - top);
     }
+}
+
+void WaveformView::updatePlayhead(int frame, int slice)
+{
+    auto line = [this](int f)
+    {
+        if (f < 0)
+            return juce::Rectangle<int>();
+        return juce::Rectangle<float>(xAt(f) - 4.0f, 0.0f, 8.0f, static_cast<float>(getHeight())).getSmallestIntegerContainer();
+    };
+    auto band = [this](int s)
+    {
+        const auto& slices = editor.view.session.slices;
+        if (s < 0 || s >= slices.count)
+            return juce::Rectangle<int>();
+        const auto x0 = xAt(slices.edge[static_cast<std::size_t>(s)]), x1 = xAt(slices.edge[static_cast<std::size_t>(s + 1)]);
+        return juce::Rectangle<float>(x0 - 1.0f, 0.0f, x1 - x0 + 2.0f, static_cast<float>(getHeight())).getSmallestIntegerContainer();
+    };
+    if (slice != shownSlice)
+    {
+        repaint(band(shownSlice));
+        repaint(band(slice));
+    }
+    repaint(line(shownFrame));
+    repaint(line(frame));
+    shownFrame = frame;
+    shownSlice = slice;
 }
 
 void WaveformView::mouseMove(const juce::MouseEvent& e)
@@ -486,6 +539,13 @@ void RibbonView::paintCell(juce::Graphics& g, int index, juce::Rectangle<float> 
             g.setColour(colour.withAlpha(c < gateColumns ? 0.95f : 0.22f));
             g.fillRect(seg.getX() + c, y0, 1.0f, y1 - y0);
         }
+        const auto hit = state.slices.hit[static_cast<std::size_t>(slice)];
+        if (editor.alignAmount() > 0.0f && hit > 0 && !step.reverse)
+        {
+            const auto hx = seg.getX() + seg.getWidth() * static_cast<float>(hit) / static_cast<float>(std::max(1, last - first));
+            g.setColour(live.withAlpha(0.8f));
+            g.fillRect(hx - 0.5f, seg.getBottom() - 6.0f, 1.0f, 6.0f);
+        }
     }
 }
 
@@ -494,7 +554,51 @@ void RibbonView::renderCache(juce::Graphics& g) const
     for (int i = 0; i < chop::stepCount; ++i)
         paintCell(g, i, cell(i));
 
-    g.setFont(mono(9.5f));
+    // Dovetail: the pinned step is the keystone, and every join shows how well it fits.
+    const auto& state = editor.view.session;
+    const auto anchor = state.edit.anchor[static_cast<std::size_t>(state.edit.bank)];
+    const auto& steps = editor.pattern();
+    if (anchor >= 0 && steps[static_cast<std::size_t>(anchor)].slice >= 0 && state.fit != nullptr && state.fit->count > 0)
+    {
+        std::vector<int> hits;
+        for (int i = 0; i < chop::stepCount; ++i)
+            if (steps[static_cast<std::size_t>(i)].slice >= 0)
+                hits.push_back(i);
+        const auto& pinned = steps[static_cast<std::size_t>(anchor)];
+        for (std::size_t k = 0; k < hits.size() && hits.size() > 1; ++k)
+        {
+            const auto from = hits[(k + hits.size() - 1) % hits.size()], to = hits[k];
+            const auto quality = chop::joinQuality(*state.fit, steps[static_cast<std::size_t>(from)], steps[static_cast<std::size_t>(to)], &pinned);
+            const auto colourFrom = chopColour(steps[static_cast<std::size_t>(from)].slice % state.fit->count);
+            const auto colourTo = chopColour(steps[static_cast<std::size_t>(to)].slice % state.fit->count);
+            const auto a = cell(from), b = cell(to);
+            const auto midY = b.getCentreY();
+            if (to == from + 1)
+            {
+                // Neighbours lock together: a tab bridges the gap, brighter the better they fit.
+                const auto gap = juce::Rectangle<float>(a.getRight() - 2.0f, midY - 9.0f, b.getX() - a.getRight() + 4.0f, 18.0f);
+                juce::ColourGradient glow(colourFrom.withAlpha(0.15f + 0.85f * quality), gap.getX(), midY,
+                                          colourTo.withAlpha(0.15f + 0.85f * quality), gap.getRight(), midY, false);
+                g.setGradientFill(glow);
+                g.fillRoundedRectangle(gap, 3.0f);
+            }
+            else
+            {
+                // A join across rests: a notch on the incoming edge
+                g.setColour(colourTo.withAlpha(0.15f + 0.85f * quality));
+                g.fillRoundedRectangle(b.getX() - 3.0f, midY - 8.0f, 4.0f, 16.0f, 2.0f);
+            }
+        }
+        const auto keystone = cell(anchor);
+        g.setColour(text);
+        g.drawRoundedRectangle(keystone.reduced(1.0f), 8.0f, 2.2f);
+        // Pin glyph
+        const auto px = keystone.getRight() - 11.0f, py = keystone.getY() + 9.0f;
+        g.fillEllipse(px - 3.5f, py - 3.5f, 7.0f, 7.0f);
+        g.fillRect(px - 0.75f, py + 2.0f, 1.5f, 5.0f);
+    }
+
+    g.setFont(mono(10.5f));
     for (int beat = 0; beat < 4; ++beat)
     {
         const auto r = cell(beat * 4);
@@ -517,7 +621,7 @@ void RibbonView::paint(juce::Graphics& g)
     {
         cacheScale = physical;
         cache = juce::Image(juce::Image::ARGB, std::max(1, juce::roundToInt(getWidth() * physical)),
-                            std::max(1, juce::roundToInt(getHeight() * physical)), true, juce::SoftwareImageType());
+                            std::max(1, juce::roundToInt(getHeight() * physical)), true, juce::NativeImageType());
         juce::Graphics cg(cache);
         cg.addTransform(juce::AffineTransform::scale(physical));
         renderCache(cg);
@@ -547,6 +651,13 @@ void RibbonView::paint(juce::Graphics& g)
             g.fillRoundedRectangle(r, 8.0f);
         }
     }
+}
+
+void RibbonView::stepMoved(int previous, int current)
+{
+    for (const auto index : { previous, current })
+        if (index >= 0 && index < chop::stepCount)
+            repaint(cell(index).expanded(4.0f).getSmallestIntegerContainer());
 }
 
 void RibbonView::mouseDown(const juce::MouseEvent& e)
@@ -656,8 +767,11 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     for (auto* c : std::initializer_list<juce::Component*> {
              &waveform, &ribbon, &load, &output, &mode, &density, &division, &sensitivity, &rechop, &snap, &loopBpm,
              &banks, &grooves, &inOrderButton, &clearButton, &play, &tempo, &rate, &hostSync, &tempoFit, &swing,
-             &dice, &chaos, &undoButton, &previousChop, &nextChop, &gate, &pitch, &ratchet, &reverse, &rest, &root })
+             &dice, &chaos, &undoButton, &previousChop, &nextChop, &gate, &pitch, &ratchet, &reverse, &rest, &root,
+             &pin, &fitKnob, &vintageMode, &chokeMode, &drive, &alignKnob })
         content.addAndMakeVisible(*c);
+    setWantsKeyboardFocus(true);
+    content.addMouseListener(this, true);
 
     // Header
     load.onClick = [this] { chooseSample(); };
@@ -759,7 +873,14 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
             processor.setPlaying(true);
         pull();
     };
-    dice.setTooltip("Rearrange this bank. Everything it changes can be undone.");
+    dice.setTooltip("Rearrange this bank. With a step pinned, Dovetail picks chops that fit around it. Everything can be undone.");
+    fitKnob.slider.setRange(0.0, 100.0, 1.0);
+    fitKnob.format = [](double v) { return juce::String(juce::roundToInt(v)) + "%"; };
+    fitKnob.slider.setTooltip("Dovetail: PIN a step, then roll. Every chop after it is chosen to flow out of the one before it "
+                              "(key, loudness, tone), wrapping back round to the pinned step. Higher = stricter fit; CHAOS adds adventure.");
+    fitKnob.slider.onDragEnd = [this] { processor.setFitAmount(juce::roundToInt(fitKnob.slider.getValue())); pull(); };
+    fitKnob.onValue = [this] { if (!fitKnob.slider.isMouseButtonDown()) processor.setFitAmount(juce::roundToInt(fitKnob.slider.getValue())); };
+    fitKnob.slider.setDoubleClickReturnValue(true, 70.0);
     chaos.slider.setRange(0.0, 100.0, 1.0);
     chaos.format = [](double v) { return juce::String(juce::roundToInt(v)) + "%"; };
     chaos.slider.setTooltip("How much each roll changes");
@@ -824,6 +945,10 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     ratchet.onChange = [this](int value) { editSelected([value](chop::Step& s) { s.ratchet = value; }); };
     reverse.setClickingTogglesState(true);
     reverse.onClick = [this] { const auto on = reverse.getToggleState(); editSelected([on](chop::Step& s) { s.reverse = on; }); };
+    reverse.setTooltip("Play this step backwards");
+    pin.setClickingTogglesState(true);
+    pin.setTooltip("Pin this step for Dovetail. RANDOMIZE never changes it, and builds the rest of the bank around it.");
+    pin.onClick = [this] { processor.togglePin(selectedStep); pull(); };
     rest.setClickingTogglesState(true);
     rest.setTooltip("Turn this step into a rest, or back into a hit");
     rest.onClick = [this]
@@ -831,6 +956,28 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
         const auto makeRest = rest.getToggleState();
         editSelected([makeRest, this](chop::Step& s) { s.slice = makeRest ? -1 : selectedChop; });
     };
+
+    // Sound
+    vintageMode.setOptions({ "CLEAN", "12-BIT 40K", "12-BIT 26K", "16-BIT WARM" }, { 0, 1, 2, 3 });
+    vintageMode.setTooltip("Classic sampler character. 12-BIT 40K: punchy and warm, like the late-'80s drum samplers. "
+                           "12-BIT 26K: gritty, with aliasing folding back in. 16-BIT WARM: clean but rounded, like the early-'90s ones.");
+    vintageMode.onChange = [this](int value) { setParameter("vintage", static_cast<float>(value)); };
+    drive.slider.setRange(0.0, 100.0, 1.0);
+    drive.format = [](double v) { return juce::String(juce::roundToInt(v)) + "%"; };
+    drive.slider.setTooltip("How hard the sound hits the vintage input stage");
+    driveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters, "drive", drive.slider);
+    drive.slider.setDoubleClickReturnValue(true, 35.0);
+    chokeMode.setOptions({ "CUT", "GATE", "POLY" }, { 0, 1, 2 });
+    chokeMode.setTooltip("CUT: every hit cuts the last and rings until the next, like FL Studio's \"Cut by 1\" on every pad. "
+                         "GATE: hits stop at their step gate, and MIDI note lengths count. POLY: hits ring over each other.");
+    chokeMode.onChange = [this](int value) { setParameter("choke", static_cast<float>(value)); };
+    alignKnob.slider.setRange(0.0, 100.0, 1.0);
+    alignKnob.format = [](double v) { return juce::String(juce::roundToInt(v)) + "%"; };
+    alignKnob.slider.setTooltip("Hit Align measures how late each chop's attack comes after its cut and starts it early, "
+                                "so every hit lands on the grid whatever chop goes where. Keys and MIDI start right at the attack. "
+                                "Lower it to keep some natural looseness.");
+    alignAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters, "align", alignKnob.slider);
+    alignKnob.slider.setDoubleClickReturnValue(true, 100.0);
 
     // Footer: MIDI root
     for (int note = 24; note <= 96; ++note)
@@ -932,6 +1079,7 @@ void EpsilonChopEditor::pull()
     content.repaint(heroPanel.toNearestInt());
     content.repaint(ribbonPanel.toNearestInt());
     content.repaint(stepPanel.toNearestInt());
+    content.repaint(variationPanel.toNearestInt());
     content.repaint(0, designHeight - 34, designWidth, 34);
 }
 
@@ -967,13 +1115,19 @@ void EpsilonChopEditor::syncControls()
         flags[static_cast<std::size_t>(b)].setToggleState((edit.randomFlags & (1 << b)) != 0, juce::dontSendNotification);
     if (!chaos.slider.isMouseButtonDown())
         chaos.slider.setValue(edit.chaos, juce::dontSendNotification);
+    if (!fitKnob.slider.isMouseButtonDown())
+        fitKnob.slider.setValue(edit.fitAmount, juce::dontSendNotification);
+    const auto anchor = edit.anchor[static_cast<std::size_t>(edit.bank)];
+    const auto dovetail = anchor >= 0 && pattern()[static_cast<std::size_t>(anchor)].slice >= 0 && edit.fitAmount > 0;
     dice.setEnabled(hasSample && edit.randomFlags != 0);
     static const std::array<const char*, 6> flagWords { "Swap", "Rhythm", "Stutter", "Reverse", "Pitch", "Gate" };
     juce::StringArray active;
     for (int b = 0; b < 6; ++b)
         if ((edit.randomFlags & (1 << b)) != 0)
             active.add(flagWords[static_cast<std::size_t>(b)]);
-    dice.setSubtitle(!hasSample ? "Load a sample first" : (active.isEmpty() ? "Pick what to change below" : active.joinIntoString(juce::String::fromUTF8("  ·  "))));
+    dice.setSubtitle(!hasSample ? "Load a sample first"
+                     : (dovetail ? juce::String::fromUTF8("Dovetail · step ") + twoDigits(anchor + 1)
+                                 : (active.isEmpty() ? "Pick what to change below" : active.joinIntoString(juce::String::fromUTF8("  ·  ")))));
     undoButton.setEnabled(view.canUndo);
 
     const auto& step = pattern()[static_cast<std::size_t>(selectedStep)];
@@ -992,6 +1146,10 @@ void EpsilonChopEditor::syncControls()
     pitch.repaint();
     ratchet.setSelected(step.ratchet);
     reverse.setToggleState(step.reverse, juce::dontSendNotification);
+    pin.setToggleState(anchor == selectedStep, juce::dontSendNotification);
+    pin.setEnabled(hasSample && (isHit || anchor == selectedStep));
+    vintageMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("vintage")->load()));
+    chokeMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("choke")->load()));
 
     const auto rateIndex = juce::roundToInt(processor.parameters.getRawParameterValue("rate")->load());
     rate.setSelected(rateIndex);
@@ -1041,8 +1199,9 @@ void EpsilonChopEditor::resized()
     tempoFit.setBounds(250, 670, 114, 26);
     swing.setBounds(282, 574, 84, 86);
 
-    dice.setBounds(408, 578, 214, 66);
-    chaos.setBounds(632, 570, 108, 86);
+    dice.setBounds(408, 578, 152, 66);
+    chaos.setBounds(566, 570, 88, 86);
+    fitKnob.setBounds(656, 570, 88, 86);
     for (int i = 0; i < 6; ++i)
         flags[static_cast<std::size_t>(i)].setBounds(408 + i * 56, 654, 52, 24);
     undoButton.setBounds(408, 686, 64, 20);
@@ -1052,10 +1211,16 @@ void EpsilonChopEditor::resized()
     gate.setBounds(778, 612, 72, 86);
     pitch.setBounds(852, 612, 72, 86);
     ratchet.setBounds(936, 628, 148, 26);
-    reverse.setBounds(936, 666, 72, 26);
-    rest.setBounds(1012, 666, 72, 26);
+    reverse.setBounds(936, 666, 46, 26);
+    rest.setBounds(986, 666, 46, 26);
+    pin.setBounds(1036, 666, 48, 26);
 
-    root.setBounds(96, 722, 72, 22);
+    vintageMode.setBounds(36, 760, 400, 30);
+    drive.setBounds(446, 728, 80, 84);
+    chokeMode.setBounds(548, 760, 210, 30);
+    alignKnob.setBounds(770, 728, 84, 84);
+
+    root.setBounds(96, designHeight - 30, 72, 22);
     layoutContext();
 }
 
@@ -1129,6 +1294,16 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     drawPanel(g, transportPanel, "TRANSPORT");
     drawPanel(g, variationPanel, "VARIATION");
     drawPanel(g, stepPanel, "STEP");
+    drawPanel(g, soundPanel);
+    caption(g, "VINTAGE", { 36, 740, 120, 14 });
+    caption(g, "CHOKE", { 548, 740, 120, 14 });
+    g.setColour(text);
+    g.setFont(sans(11.0f, true));
+    g.drawText("PLAY FROM YOUR KEYBOARD", 880, 744, 210, 16, juce::Justification::centredLeft);
+    g.setColour(dim);
+    g.setFont(mono(11.0f));
+    g.drawText(juce::String::fromUTF8("1 – 0   chops 01 – 10"), 880, 764, 210, 16, juce::Justification::centredLeft);
+    g.drawText(juce::String::fromUTF8("Q – P   chops 11 – 20"), 880, 782, 210, 16, juce::Justification::centredLeft);
 
     // Context captions in the chop bar
     const auto m = view.session.edit.mode;
@@ -1157,7 +1332,7 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     g.drawText("ARRANGEMENT", 36, 400, 120, 26, juce::Justification::centredLeft);
     g.setColour(faint);
     g.setFont(sans(11.0f));
-    g.drawText(juce::String::fromUTF8("Drag chops from the waveform onto steps  ·  scroll a step to change its chop  ·  right-click for a rest"),
+    g.drawText(juce::String::fromUTF8("Drag chops onto steps  ·  scroll a step to change it  ·  PIN a step, then roll to Dovetail"),
                312, 400, 500, 26, juce::Justification::centredLeft);
 
     // Transport readout under the play button
@@ -1175,7 +1350,7 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     {
         g.setColour(text);
         g.setFont(mono(10.5f));
-        g.drawFittedText(view.lastRoll, 480, 686, 262, 20, juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText(view.lastRoll, 480, 686, 266, 20, juce::Justification::centredLeft, 1, 0.75f);
     }
     else
         g.drawText("Every roll can be undone", 480, 686, 240, 20, juce::Justification::centredLeft);
@@ -1204,7 +1379,7 @@ void EpsilonChopEditor::paintFooter(juce::Graphics& g)
     const auto y = designHeight - 30;
     caption(g, "MIDI ROOT", { 24, y, 70, 22 });
     g.setColour(faint);
-    g.setFont(sans(10.5f));
+    g.setFont(sans(11.0f));
     g.drawText("= Chop 01. Every key above plays the next chop, wrapping around.", 176, y, 420, 22, juce::Justification::centredLeft);
 
     juce::String clock;
@@ -1245,9 +1420,23 @@ void EpsilonChopEditor::timerCallback()
     tempo.editable = !hostHasTempo;
     tempo.tag = hostHasTempo ? "HOST" : "INTERNAL";
     tempo.tagLive = synced;
-    tempo.setValue(hostHasTempo ? processor.tempo() : processor.parameters.getRawParameterValue("tempo")->load());
-    tempo.repaint();
+    const auto shownTempo = hostHasTempo ? processor.tempo() : static_cast<double>(processor.parameters.getRawParameterValue("tempo")->load());
+    tempo.setValue(shownTempo);
+    if (std::abs(shownTempo - seenTempo) > 1.0e-6)
+    {
+        seenTempo = shownTempo;
+        tempo.repaint();
+    }
     rate.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("rate")->load()));
+    vintageMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("vintage")->load()));
+    chokeMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("choke")->load()));
+    if (const auto a = alignAmount(); std::abs(a - seenAlign) > 1.0e-4f)
+    {
+        // Hit markers appear and disappear with Hit Align.
+        seenAlign = a;
+        waveform.contentChanged();
+        ribbon.contentChanged();
+    }
 
     const auto step = processor.playStep();
     const auto frame = processor.playFrame();
@@ -1256,13 +1445,61 @@ void EpsilonChopEditor::timerCallback()
     {
         seenFrame = frame;
         seenSlice = slice;
-        waveform.repaint();
+        waveform.updatePlayhead(frame, slice);
     }
     if (step != seenStep)
     {
+        ribbon.stepMoved(seenStep, step);
         seenStep = step;
-        ribbon.repaint();
     }
+}
+
+float EpsilonChopEditor::alignAmount() const
+{
+    return processor.parameters.getRawParameterValue("align")->load() * 0.01f;
+}
+
+void EpsilonChopEditor::mouseDown(const juce::MouseEvent&)
+{
+    // Clicking anywhere in the plugin gives it the keyboard, so 1-0 / Q-P play chops.
+    grabKeyboardFocus();
+}
+
+bool EpsilonChopEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (key.getModifiers().isCommandDown() || key.getModifiers().isCtrlDown() || key.getModifiers().isAltDown())
+        return false;
+    const auto typed = juce::CharacterFunctions::toUpperCase(key.getTextCharacter());
+    const auto code = juce::CharacterFunctions::toUpperCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+    for (std::size_t i = 0; i < chopKeys.size(); ++i)
+    {
+        if (typed != chopKeys[i] && code != chopKeys[i])
+            continue;
+        const auto chopIndex = static_cast<int>(i);
+        if (view.session.sample == nullptr || chopIndex >= view.session.slices.count)
+            return true;
+        if (heldKeys[i] == 0)   // ignore auto-repeat
+        {
+            heldKeys[i] = key.getKeyCode();
+            processor.keyDown(chopIndex);
+            selectChop(chopIndex);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool EpsilonChopEditor::keyStateChanged(bool)
+{
+    auto handled = false;
+    for (std::size_t i = 0; i < heldKeys.size(); ++i)
+        if (heldKeys[i] != 0 && !juce::KeyPress::isKeyCurrentlyDown(heldKeys[i]))
+        {
+            heldKeys[i] = 0;
+            processor.keyUp(static_cast<int>(i));
+            handled = true;
+        }
+    return handled;
 }
 
 bool EpsilonChopEditor::isInterestedInFileDrag(const juce::StringArray& files)

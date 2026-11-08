@@ -1,27 +1,28 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.2.0 · sample chopper instrument (VST3 · AU · Standalone)**
+**Epsilon Sounds · v0.3.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
-Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them out on a 16-step ribbon, and rearranges them with one roll of the dice. You can hear it right away. Press **PLAY**, and FL Studio doesn't need to be running.
+**Pin the chop you love. Epsilon Chop builds the rest around it.**
 
-![Epsilon Chop v0.2.0](preview.png)
+Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 16-step ribbon and flips them with one roll of the dice. Pin one chop and **Dovetail** picks every other chop so it flows out of the one before it: same key, smooth level, matching tone, all the way round the bar. **Hit Align** lands every hit exactly on the grid whatever chop goes where, **CUT** choke works like FL Studio's "Cut by 1" on every pad, and **VINTAGE** adds the punch and grit of classic 12-bit samplers. Finger-drum chops straight from your computer keyboard.
 
-[Download the v0.2.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.2.0-Projucer.zip)
+![Epsilon Chop v0.3.0](preview.png)
 
-## What changed in v0.2.0
+[Download the v0.3.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.3.0-Projucer.zip)
 
-v0.1.0 seemed broken because nothing made a sound unless FL Studio's transport was running *and* Play Pattern was on. **Random** only changed the numbers in the step boxes. FL's step sequencer plays **C5**, but chops started at C3, so that was silent too.
+## New in v0.3.0
 
-| Problem in v0.1.0 | v0.2.0 |
+| Feature | What it does |
 | --- | --- |
-| No way to hear the pattern without starting FL | **PLAY** button with its own clock. It uses FL's tempo when FL reports one, and the internal tempo otherwise |
-| Random only swapped chop numbers | **RANDOMIZE** with a **Chaos** amount. **SWAP** makes chops trade places (every 11 becomes 13 and every 13 becomes 11) and shows each swap under the button. Other toggles: Rhythm, Stutter, Reverse, Pitch and Gate. RANDOMIZE starts PLAY so you hear the flip at once |
-| Three chop modes | **Transient** with Sensitivity, **Beat** at 1/4, 1/8 or 1/16 and snapped to hits, **Grid**, **Random** with re-chop, and **Manual**. Every cut snaps to a zero crossing |
-| C5 was silent | **MIDI root C5 = Chop 01**, and every key wraps onto a chop. The root is changeable in the footer |
-| Steps had only a chop and a gate | Each step also has **ratchet** (1–4 repeats), **pitch** (±12 st) and **reverse** |
-| Whole UI redrawn 30 times a second, Debug at -O0 | Waveform and ribbon are cached, and only the playhead redraws. Debug is optimised (-O3) |
+| **Dovetail** | **PIN** a step, then RANDOMIZE. Every other hit gets the chop that best continues the one before it, judged on key, loudness and tone as each step actually plays, and learned from how your own sample flows. The whole chain is chosen at once and wraps back into the pinned step, so the loop point fits too. **DOVETAIL** sets how strict, **CHAOS** how adventurous. On the ribbon, cells that fit lock together and glow. |
+| **Hit Align** | Measures how many ms after its cut each chop's attack really starts, and starts it that much early, so every hit lands on the grid (within 0.6 ms in tests; without it, late chops dragged up to 8 ms). MIDI and keyboard hits start right at the attack. |
+| **CHOKE: CUT / GATE / POLY** | CUT (default) = every pad on "Cut by 1": each hit rings until the next cuts it. GATE = v0.2 behaviour, and MIDI note lengths now count. POLY = hits overlap. |
+| **VINTAGE + DRIVE** | 12-BIT 40K (punchy, warm), 12-BIT 26K (gritty, aliasing), 16-BIT WARM, or CLEAN. Analogue input saturation, sample-and-hold converter, 12/16-bit steps, output filter and low-end weight. |
+| **Computer keyboard** | 1–0 play chops 01–10 and Q–P play 11–20. Each key is shown next to its chop on the waveform. |
+| **Fixes** | Undo is per bank. Low CHAOS keeps your hand-set ratchets, reverses and pitches (it's now the chance each hit is re-rolled). The swap readout is always exactly what happened (pairs never share a chop). ZERO-X only snaps cuts backwards, so attacks are never cut off, and voices fade in over 0.3 ms instead of 2 ms, so hits stay sharp. |
+| **Lighter and faster** | The sample is saved in the FL project as 24-bit FLAC with its analysis, so projects are much smaller and reopen without re-analysing. The waveform and ribbon only redraw what moved during playback, which matters on the Intel MacBook Pro. |
 
-Saved v0.1.0 sessions still load. The plug-in IDs (`EpsS` / `EpCh`) and the `pattern` / `output` parameters are unchanged.
+Projects from v0.1 and v0.2 open and sound exactly as before (Choke = Gate, Hit Align = 0, Vintage = Clean). The plug-in IDs (`EpsS` / `EpCh`) are unchanged.
 
 ## Build on the 2019 Intel MacBook Pro
 
@@ -42,40 +43,25 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Using it
 
-1. **Load.** Drop a WAV, AIFF, FLAC or MP3 anywhere on the window, or click **LOAD SAMPLE**. The limit is 120 seconds.
-2. **Chop.** Choose a mode in the bar above the waveform. Click a chop to hear it. Drag a cut line to move it, which switches to Manual. Double-click to add a cut, and right-click a cut to remove it. **LOOP BPM** is detected from the loop length. Drag it to correct it, and double-click it to re-detect.
-3. **Arrange.** Drag a chop from the waveform onto any step. Scroll over a step to change its chop. Right-click or double-click a step to make it a rest. **IN ORDER** lays the chops out as recorded, and **GROOVES** loads starting rhythms. **A–D** are four independent banks.
-4. **Play.** Press **PLAY** to preview on the internal clock. Turn on **HOST SYNC** to play the bank whenever FL's transport runs, locked to the bar. **RATE** sets 1/8, 1/16 or 1/32 steps, and **SWING** adds shuffle. **TEMPO FIT** repitches the sample so its loop BPM matches the tempo, which keeps chops on the grid.
-5. **Flip it.** Pick what **RANDOMIZE** may change, set **CHAOS**, and roll. With **SWAP**, chops trade places and the readout shows which ones (for example `Swapped 11 ↔ 13`). **UNDO** steps back through up to 32 edits.
-6. **Shape a step.** Click a step, then set its chop, gate, pitch, ratchet and reverse in the **STEP** panel.
-7. **Piano Roll.** C5 plays Chop 01, C#5 plays Chop 02, and so on. Keys wrap around, so every note plays something.
+1. **Load.** Drop a WAV, AIFF, FLAC or MP3 anywhere on the window, or click **LOAD SAMPLE** (up to 120 s).
+2. **Chop.** Pick TRANSIENT, BEAT, GRID, RANDOM or MANUAL. Click a chop to hear it, drag a cut to move it, double-click to add one, right-click to remove one.
+3. **Arrange.** Drag chops onto steps, scroll a step to change its chop, **IN ORDER** to rebuild the loop, **GROOVES** for starting rhythms, banks **A–D**.
+4. **Play.** **PLAY** runs the internal clock; **HOST SYNC** follows FL. Click the plugin and play chops on **1–0 / Q–P**, or from C5 up in the Piano Roll.
+5. **Flip it.** Choose what RANDOMIZE may change, set CHAOS, roll. **PIN** a step first to Dovetail around it. **UNDO** steps back per bank.
+6. **Sound.** Set CHOKE, HIT ALIGN, VINTAGE and DRIVE in the bottom panel.
 
-Each instance saves its decoded sample inside the FL project, so projects reopen even if the original file has moved.
+Full details of every control and what happens under the hood: **[MANUAL.md](MANUAL.md)**.
 
 ## Validation (Linux build of the same source)
 
-- Engine tests cover:
-  - all five chop modes
-  - zero-crossing snap
-  - randomizer invariants per toggle
-  - the internal clock with no host (step timing at 1/8 and 1/16)
-  - host-synced output that is identical at 64, 257 and 1,024-frame blocks
-  - ratchet retrigger timing
-  - reverse playback
-  - octave-up length
-- Processor tests cover:
-  - WAV import and onset timing within 21 ms
-  - mode switching, re-chop, and drag-to-manual
-  - randomize and undo with bank isolation
-  - MIDI root and wrapping
-  - PLAY with FL stopped
-  - host sync start and stop
-  - sample-exact project recall
-  - rejection of a truncated state
-  - loading a v0.1.0 session
-- pluginval strictness 8: **SUCCESS**.
-- Full editor repaint takes about 5 ms in software rendering. In normal use only the playhead strip and ribbon redraw.
+- Engine and processor tests pass. They now also cover:
+  - attack measurement (within 0.5 ms) and Hit Align timing (every hit within 0.6 ms of the grid)
+  - CUT / GATE / POLY and note-off
+  - all vintage modes stay finite and bounded; 12-bit mode drops signal below its last bit
+  - Dovetail: the pinned step never changes, the chain is repeatable per seed, a twin of the pinned chop is placed after it 85% of the time, and chains fit about 5× better than a shuffle; Fit 0 is plain RANDOMIZE
+  - disjoint swaps, CHAOS keeping hand-set ratchets, per-bank undo, keyboard hits, PIN and FLAC save/restore
+- Full editor repaint is about 6 ms in software; during playback only the playhead strip and the two step cells that changed redraw.
 
 The macOS build and FL Studio scan are still to be checked on the Mac. `.github/workflows/build.yml` builds a universal VST3, AU and Standalone on macOS 15, runs the tests and pluginval, and uploads them with `INSTALL.txt`.
 
-**[Illustrated manual (PDF)](Manual/Epsilon-Chop-Manual.pdf)** · [HTML version](Manual/Epsilon-Chop-Manual.html) · [Text manual](MANUAL.md) · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)
+**[Text manual (v0.3)](MANUAL.md)** · [Illustrated manual (PDF, v0.2)](Manual/Epsilon-Chop-Manual.pdf) · [HTML version](Manual/Epsilon-Chop-Manual.html) · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)

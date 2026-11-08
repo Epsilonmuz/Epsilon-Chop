@@ -20,6 +20,7 @@ public:
     explicit WaveformView(EpsilonChopEditor& owner) : editor(owner) {}
 
     void contentChanged() { cacheValid = false; repaint(); }
+    void updatePlayhead(int frame, int slice);   // repaints only what moved
     void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
@@ -41,6 +42,7 @@ private:
     bool cacheValid = false;
     int hoverSlice = -1, hoverMarker = -1;
     int dragMarker = -1, dragFrame = 0, downSlice = -1;
+    int shownFrame = -1, shownSlice = -1;
     std::uint64_t dragRevision = 0;
     bool dragStarted = false;
 };
@@ -62,6 +64,7 @@ public:
     void itemDropped(const SourceDetails&) override;
 
     juce::Rectangle<float> cell(int index) const;
+    void stepMoved(int previous, int current);
 
 private:
     void renderCache(juce::Graphics&) const;
@@ -103,8 +106,12 @@ public:
     void pull();
     void chooseSample();
     void tick() { timerCallback(); }   // used by the snapshot tests
+    bool keyPressed(const juce::KeyPress&) override;
+    bool keyStateChanged(bool isKeyDown) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    float alignAmount() const;
 
-    static constexpr int designWidth = 1120, designHeight = 752;
+    static constexpr int designWidth = 1120, designHeight = 852;
 
 private:
     void timerCallback() override;
@@ -149,11 +156,20 @@ private:
     juce::TextButton previousChop { "<" }, nextChop { ">" };
     ui::Knob gate { "GATE" }, pitch { "PITCH" };
     ui::Segmented ratchet;
-    juce::TextButton reverse { "REVERSE" }, rest { "REST" };
+    juce::TextButton reverse { "REV" }, rest { "REST" }, pin { "PIN" };
+    ui::Knob fitKnob { "DOVETAIL" };
+
+    ui::Segmented vintageMode, chokeMode;
+    ui::Knob drive { "DRIVE" }, alignKnob { "HIT ALIGN" };
 
     juce::ComboBox root;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment, swingAttachment;
+    std::array<int, 20> heldKeys {};   // key code held for each chop, 0 = up
+    float seenAlign = -1.0f;
+    double seenTempo = -1.0;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment, swingAttachment,
+        driveAttachment, alignAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hostAttachment, fitAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 

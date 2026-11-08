@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.2.0"
+<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.3.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.chop"
               pluginName="Epsilon Chop" pluginDesc="Sample chopper and pattern instrument"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"
               pluginCode="EpCh" pluginFormats="buildVST3,buildAU,buildStandalone"
               pluginVST3Category="Instrument|Sampler" pluginAUMainType="'aumu'"
               cppLanguageStandard="17" useAppConfig="0" addUsingNamespaceToJuceHeader="0"
-              displaySplashScreen="0" jucerFormatVersion="1" pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn">
+              displaySplashScreen="0" jucerFormatVersion="1" pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn,pluginEditorRequiresKeys">
   <MAINGROUP id="pOoo84" name="Epsilon Chop">
     <GROUP id="cs6mvh" name="Source">
       <FILE id="3905c1" name="ChopEngine.cpp" compile="1" resource="0" file="Source/ChopEngine.cpp"/>

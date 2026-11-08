@@ -62,6 +62,8 @@ public:
     void randomize();
     void setRandomFlags(int);             // not undoable
     void setChaos(int);                   // not undoable
+    void setFitAmount(int);               // Dovetail amount, not undoable
+    void togglePin(int step);             // pin / unpin a step for Dovetail, not undoable
     void undo();
     void setStep(int index, chop::Step, bool remember = true);
     void editBoundary(int index, int position);
@@ -69,6 +71,9 @@ public:
     // Audition
     void previewChop(int slice) noexcept { previewRequest.store(slice, std::memory_order_relaxed); }
     void stopAll() noexcept { previewRequest.store(-2, std::memory_order_relaxed); setPlaying(false); }
+    // Computer keyboard: 1-9, 0, then Q-P play chops 1-20 (Hit Align applies, like MIDI).
+    void keyDown(int chop) noexcept { pushKey(chop + 1); }
+    void keyUp(int chop) noexcept { pushKey(-(chop + 1)); }
     void setPlaying(bool shouldPlay) noexcept { playing.store(shouldPlay, std::memory_order_relaxed); }
     bool isPlaying() const noexcept { return playing.load(std::memory_order_relaxed); }
 
@@ -90,10 +95,19 @@ private:
     void loadOnWorker(juce::File, std::uint64_t ticket);
     const chop::Session* acquireAudioState() noexcept;
     void reclaimLocked();
+    void pushKey(int code) noexcept;
+    bool canUndoLocked(int bank) const;
+
+    struct HistoryEntry
+    {
+        chop::Edit edit;
+        int bank = 0;
+        bool patternOnly = false;   // only this bank's pattern changed: undone only from this bank
+    };
 
     mutable std::mutex mutex;
     std::vector<std::unique_ptr<chop::Session>> snapshots;
-    std::vector<chop::Edit> history;
+    std::vector<HistoryEntry> history;
     juce::String status { "Drop a sample anywhere, or click LOAD" };
     bool loading = false;
     juce::String lastRoll;
@@ -112,6 +126,12 @@ private:
     std::atomic<float>* fitParameter = nullptr;
     std::atomic<float>* rootParameter = nullptr;
     std::atomic<float>* tempoParameter = nullptr;
+    std::atomic<float>* chokeParameter = nullptr;
+    std::atomic<float>* alignParameter = nullptr;
+    std::atomic<float>* vintageParameter = nullptr;
+    std::atomic<float>* driveParameter = nullptr;
+    juce::AbstractFifo keyFifo { 64 };
+    std::array<int, 64> keyEvents {};
     chop::Engine engine;
     juce::ThreadPool loader { 1 };
 
