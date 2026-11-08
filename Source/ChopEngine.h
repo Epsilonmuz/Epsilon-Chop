@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace chop
@@ -119,7 +120,12 @@ Pattern makePreset(int index) noexcept;
 Pattern inOrder(int slices) noexcept;
 Edit defaultEdit() noexcept;
 bool sanitiseStep(Step&) noexcept;
-bool randomizePattern(Pattern&, int slices, int flags, int chaos, std::uint32_t& seed) noexcept;
+// CHOPS swaps chops' places: a swap of 11 and 13 turns every 11 into 13 and every
+// 13 into 11, timing untouched. Chaos sets how many swaps; 100% shuffles every chop.
+// The swaps made are reported in `swaps` (empty after a full shuffle).
+using Swap = std::pair<int, int>;
+bool randomizePattern(Pattern&, int slices, int flags, int chaos, std::uint32_t& seed,
+                      std::vector<Swap>* swaps = nullptr, bool* fullShuffle = nullptr) noexcept;
 int hitCount(const Pattern&) noexcept;
 
 // ---- playback --------------------------------------------------------------

@@ -103,7 +103,8 @@ void Look::drawButtonBackground(juce::Graphics& g, juce::Button& button, const j
 void Look::drawButtonText(juce::Graphics& g, juce::TextButton& button, bool over, bool)
 {
     const auto on = button.getToggleState();
-    auto colour = on ? ink0 : (over ? text : dim);
+    // Action buttons read brighter than switched-off toggles.
+    auto colour = on ? ink0 : (over ? text : (button.getClickingTogglesState() ? dim : text.withAlpha(0.88f)));
     if (!button.isEnabled())
         colour = faint;
     g.setColour(colour);

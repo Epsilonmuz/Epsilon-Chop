@@ -15,7 +15,7 @@ v0.1.0 seemed broken because nothing made a sound unless FL Studio's transport w
 | Problem in v0.1.0 | v0.2.0 |
 | --- | --- |
 | No way to hear the pattern without starting FL | **PLAY** button with its own clock. It uses FL's tempo when FL reports one, and the internal tempo otherwise |
-| Random only swapped chop numbers | **RANDOMIZE** with a **Chaos** amount. Toggles choose what it changes: Chops, Rhythm, Stutter, Reverse, Pitch and Gate |
+| Random only swapped chop numbers | **RANDOMIZE** with a **Chaos** amount. **SWAP** makes chops trade places (every 11 becomes 13 and every 13 becomes 11) and shows each swap under the button. Other toggles: Rhythm, Stutter, Reverse, Pitch and Gate. RANDOMIZE starts PLAY so you hear the flip at once |
 | Three chop modes | **Transient** with Sensitivity, **Beat** at 1/4, 1/8 or 1/16 and snapped to hits, **Grid**, **Random** with re-chop, and **Manual**. Every cut snaps to a zero crossing |
 | C5 was silent | **MIDI root C5 = Chop 01**, and every key wraps onto a chop. The root is changeable in the footer |
 | Steps had only a chop and a gate | Each step also has **ratchet** (1–4 repeats), **pitch** (±12 st) and **reverse** |
@@ -46,7 +46,7 @@ ctest --test-dir build -C Release --output-on-failure
 2. **Chop.** Choose a mode in the bar above the waveform. Click a chop to hear it. Drag a cut line to move it, which switches to Manual. Double-click to add a cut, and right-click a cut to remove it. **LOOP BPM** is detected from the loop length. Drag it to correct it, and double-click it to re-detect.
 3. **Arrange.** Drag a chop from the waveform onto any step. Scroll over a step to change its chop. Right-click or double-click a step to make it a rest. **IN ORDER** lays the chops out as recorded, and **GROOVES** loads starting rhythms. **A–D** are four independent banks.
 4. **Play.** Press **PLAY** to preview on the internal clock. Turn on **HOST SYNC** to play the bank whenever FL's transport runs, locked to the bar. **RATE** sets 1/8, 1/16 or 1/32 steps, and **SWING** adds shuffle. **TEMPO FIT** repitches the sample so its loop BPM matches the tempo, which keeps chops on the grid.
-5. **Flip it.** Pick what **RANDOMIZE** may change, set **CHAOS**, and roll. **UNDO** steps back through up to 32 edits.
+5. **Flip it.** Pick what **RANDOMIZE** may change, set **CHAOS**, and roll. With **SWAP**, chops trade places and the readout shows which ones (for example `Swapped 11 ↔ 13`). **UNDO** steps back through up to 32 edits.
 6. **Shape a step.** Click a step, then set its chop, gate, pitch, ratchet and reverse in the **STEP** panel.
 7. **Piano Roll.** C5 plays Chop 01, C#5 plays Chop 02, and so on. Keys wrap around, so every note plays something.
 
@@ -78,4 +78,4 @@ Each instance saves its decoded sample inside the FL project, so projects reopen
 
 The macOS build and FL Studio scan are still to be checked on the Mac. `.github/workflows/build.yml` builds a universal VST3, AU and Standalone on macOS 15, runs the tests and pluginval, and uploads them with `INSTALL.txt`.
 
-[Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)
+**[Full manual: every control and how it works](MANUAL.md)** · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)

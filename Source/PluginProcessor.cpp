@@ -381,7 +381,7 @@ void EpsilonChopProcessor::setStatusLocked(juce::String message)
 EpsilonChopProcessor::EditorState EpsilonChopProcessor::editorState() const
 {
     const std::lock_guard<std::mutex> lock(mutex);
-    return { *published.load(), status, !history.empty(), loading };
+    return { *published.load(), status, !history.empty(), loading, lastRoll };
 }
 
 void EpsilonChopProcessor::loadFile(const juce::File& file)
@@ -612,10 +612,23 @@ void EpsilonChopProcessor::clearPattern()
 
 void EpsilonChopProcessor::randomize()
 {
-    edit([](auto& state)
+    edit([this](auto& state)
     {
-        return chop::randomizePattern(state.edit.patterns[state.edit.bank], std::max(1, state.slices.count),
-                                      state.edit.randomFlags, state.edit.chaos, state.seed);
+        std::vector<chop::Swap> swaps;
+        bool shuffled = false;
+        const auto changed = chop::randomizePattern(state.edit.patterns[state.edit.bank], std::max(1, state.slices.count),
+                                                    state.edit.randomFlags, state.edit.chaos, state.seed, &swaps, &shuffled);
+        // Called under the mutex: describe the roll so the editor can show what moved.
+        juce::StringArray parts;
+        if (shuffled)
+            parts.add("Every chop shuffled");
+        for (const auto& [a, b] : swaps)
+            parts.add(juce::String(a + 1).paddedLeft('0', 2) + juce::String::fromUTF8(" \u2194 ")
+                      + juce::String(b + 1).paddedLeft('0', 2));
+        lastRoll = parts.isEmpty() ? juce::String() : "Swapped " + parts.joinIntoString("   ");
+        if (shuffled)
+            lastRoll = parts[0];
+        return changed;
     });
 }
 
@@ -651,6 +664,7 @@ void EpsilonChopProcessor::undo()
     auto next = std::make_unique<chop::Session>(*published.load());
     next->edit = history.back();
     history.pop_back();
+    lastRoll = {};
     publishLocked(std::move(next));
 }
 

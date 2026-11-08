@@ -751,16 +751,23 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     swing.slider.setDoubleClickReturnValue(true, 0.0);
 
     // Variation
-    dice.onClick = [this] { processor.randomize(); pull(); };
+    dice.onClick = [this]
+    {
+        processor.randomize();
+        // Hear the flip straight away.
+        if (!processor.isPlaying() && !processor.hostSynced())
+            processor.setPlaying(true);
+        pull();
+    };
     dice.setTooltip("Rearrange this bank. Everything it changes can be undone.");
     chaos.slider.setRange(0.0, 100.0, 1.0);
     chaos.format = [](double v) { return juce::String(juce::roundToInt(v)) + "%"; };
     chaos.slider.setTooltip("How much each roll changes");
     chaos.slider.onDragEnd = [this] { processor.setChaos(juce::roundToInt(chaos.slider.getValue())); pull(); };
     chaos.onValue = [this] { if (!chaos.slider.isMouseButtonDown()) processor.setChaos(juce::roundToInt(chaos.slider.getValue())); };
-    const std::array<const char*, 6> flagNames { "CHOPS", "RHYTHM", "STUTTER", "REVERSE", "PITCH", "GATE" };
+    const std::array<const char*, 6> flagNames { "SWAP", "RHYTHM", "STUTTER", "REVERSE", "PITCH", "GATE" };
     const std::array<const char*, 6> flagTips {
-        "Swap which chop plays on each hit", "Move hits to new steps (downbeats are favoured)",
+        "Chops trade places: e.g. every 11 becomes 13 and every 13 becomes 11, timing untouched. CHAOS sets how many swaps; 100% shuffles every chop", "Move hits to new steps (downbeats are favoured)",
         "Add ratchets: 2, 3 or 4 quick repeats inside a step", "Play some chops backwards",
         "Shift some hits by a fourth, fifth or octave", "Shorten or lengthen hits" };
     for (int i = 0; i < 6; ++i)
@@ -961,7 +968,7 @@ void EpsilonChopEditor::syncControls()
     if (!chaos.slider.isMouseButtonDown())
         chaos.slider.setValue(edit.chaos, juce::dontSendNotification);
     dice.setEnabled(hasSample && edit.randomFlags != 0);
-    static const std::array<const char*, 6> flagWords { "Chops", "Rhythm", "Stutter", "Reverse", "Pitch", "Gate" };
+    static const std::array<const char*, 6> flagWords { "Swap", "Rhythm", "Stutter", "Reverse", "Pitch", "Gate" };
     juce::StringArray active;
     for (int b = 0; b < 6; ++b)
         if ((edit.randomFlags & (1 << b)) != 0)
@@ -1164,7 +1171,14 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     // Undo hint
     g.setColour(faint);
     g.setFont(sans(10.5f));
-    g.drawText("Every roll can be undone", 480, 686, 240, 20, juce::Justification::centredLeft);
+    if (view.lastRoll.isNotEmpty())
+    {
+        g.setColour(text);
+        g.setFont(mono(10.5f));
+        g.drawFittedText(view.lastRoll, 480, 686, 262, 20, juce::Justification::centredLeft, 1, 0.8f);
+    }
+    else
+        g.drawText("Every roll can be undone", 480, 686, 240, 20, juce::Justification::centredLeft);
 
     // Step inspector header
     const auto& step = pattern()[static_cast<std::size_t>(selectedStep)];

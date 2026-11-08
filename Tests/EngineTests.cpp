@@ -168,6 +168,26 @@ void randomizer()
     std::uint32_t seed = 1234;
     const auto original = chop::makePreset(1);
 
+    // Swapping: chop A and chop B trade places everywhere, nothing else moves.
+    {
+        auto swapped = original;
+        std::vector<chop::Swap> swaps;
+        require(chop::randomizePattern(swapped, 8, chop::randomChops, 20, seed, &swaps) && !swaps.empty(), "swap roll reports its swaps");
+        std::array<int, chop::maxSlices> map {};
+        for (int i = 0; i < chop::maxSlices; ++i) map[i] = i;
+        for (auto [a, b] : swaps) std::swap(map[a], map[b]);
+        for (int s = 0; s < chop::stepCount; ++s)
+            require(original[s].slice < 0 ? swapped[s].slice < 0 : swapped[s].slice == map[original[s].slice],
+                    "swap moves chops only by trading places");
+        auto ordered = chop::inOrder(16);
+        bool full = false;
+        chop::randomizePattern(ordered, 16, chop::randomChops, 100, seed, nullptr, &full);
+        std::array<int, 16> seen {};
+        for (const auto& step : ordered) if (step.slice >= 0) ++seen[step.slice];
+        require(full && std::all_of(seen.begin(), seen.end(), [](int n) { return n == 1; }),
+                "100% chaos shuffles every chop exactly once");
+    }
+
     auto chopsOnly = original;
     require(chop::randomizePattern(chopsOnly, 8, chop::randomChops, 100, seed), "chops-only roll changes the bank");
     for (int s = 0; s < chop::stepCount; ++s)

@@ -368,8 +368,11 @@ int hitCount(const Pattern& pattern) noexcept
     return static_cast<int>(std::count_if(pattern.begin(), pattern.end(), [](const auto& s) { return s.slice >= 0; }));
 }
 
-bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::uint32_t& seed) noexcept
+bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::uint32_t& seed,
+                      std::vector<Swap>* swaps, bool* fullShuffle) noexcept
 {
+    if (swaps != nullptr) swaps->clear();
+    if (fullShuffle != nullptr) *fullShuffle = false;
     if (slices < 1 || (flags & randomAll) == 0)
         return false;
 
@@ -440,13 +443,44 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
         }
     }
 
+    // Swap chop positions. Works on the chop map, so every hit of chop A becomes B and
+    // every hit of B becomes A; B doesn't have to be in the bank yet.
+    std::array<int, maxSlices> map {};
+    for (int i = 0; i < maxSlices; ++i)
+        map[static_cast<std::size_t>(i)] = i;
+    for (auto& step : result)
+        if (step.slice >= 0) step.slice %= slices;
+    if ((flags & randomChops) != 0 && slices >= 2)
+    {
+        if (amount >= 0.95f)
+        {
+            for (int i = slices - 1; i > 0; --i)
+                std::swap(map[static_cast<std::size_t>(i)], map[static_cast<std::size_t>(draw(seed, i + 1))]);
+            if (fullShuffle != nullptr) *fullShuffle = true;
+        }
+        else
+        {
+            std::vector<int> used;
+            for (const auto& step : result)
+                if (step.slice >= 0 && std::find(used.begin(), used.end(), step.slice) == used.end())
+                    used.push_back(step.slice);
+            const auto count = std::max(1, static_cast<int>(std::lround(amount * std::max<std::size_t>(2, used.size()) * 0.5)));
+            for (int n = 0; n < count && !used.empty(); ++n)
+            {
+                const auto a = used[static_cast<std::size_t>(draw(seed, static_cast<int>(used.size())))];
+                auto b = draw(seed, slices - 1);
+                if (b >= a) ++b;
+                std::swap(map[static_cast<std::size_t>(a)], map[static_cast<std::size_t>(b)]);
+                if (swaps != nullptr) swaps->push_back({ a, b });
+            }
+        }
+    }
+
     for (auto& step : result)
     {
         if (step.slice < 0)
             continue;
-        step.slice %= slices;
-        if ((flags & randomChops) != 0 && chance(seed) < std::max(0.35f, amount))
-            step.slice = draw(seed, slices);
+        step.slice = map[static_cast<std::size_t>(step.slice)];
         if ((flags & randomStutter) != 0)
         {
             constexpr std::array<int, 5> ratchets { 2, 2, 3, 4, 2 };
@@ -471,9 +505,19 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
         for (auto& step : result)
             if (step.slice >= 0)
             {
-                step.slice = (step.slice + 1 + draw(seed, std::max(1, slices - 1))) % slices;
                 if (slices == 1)
+                {
                     step.reverse = !step.reverse;
+                    break;
+                }
+                // Nothing changed: trade this chop with another one.
+                const auto a = step.slice;
+                auto b = draw(seed, slices - 1);
+                if (b >= a) ++b;
+                for (auto& other : result)
+                    if (other.slice == a) other.slice = b;
+                    else if (other.slice == b) other.slice = a;
+                if (swaps != nullptr) swaps->push_back({ a, b });
                 break;
             }
     }

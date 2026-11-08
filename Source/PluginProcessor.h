@@ -39,6 +39,7 @@ public:
         juce::String status;
         bool canUndo = false;
         bool loading = false;
+        juce::String lastRoll;
     };
 
     EditorState editorState() const;
@@ -95,6 +96,7 @@ private:
     std::vector<chop::Edit> history;
     juce::String status { "Drop a sample anywhere, or click LOAD" };
     bool loading = false;
+    juce::String lastRoll;
     std::uint64_t revision = 0, sampleRevision = 0;
     std::atomic<std::uint64_t> publishedRevision { 0 }, statusSerial { 0 };
     std::atomic<const chop::Session*> published { nullptr }, audioHazard { nullptr };
