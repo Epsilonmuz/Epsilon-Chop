@@ -1,0 +1,9 @@
+# JUCE 9.0.5 is bundled in the release ZIP and fetched by CI
+/JUCE/
+/build/
+Builds/MacOSX/build/
+Builds/LinuxMakefile/build/
+Builds/VisualStudio2022/x64/
+*.xcuserstate
+xcuserdata/
+.DS_Store

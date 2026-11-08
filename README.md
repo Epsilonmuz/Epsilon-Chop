@@ -1,61 +1,81 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.1.0 · VST3 sample instrument**
+**Epsilon Sounds · v0.2.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
-Load a sample, cut it into playable chops, and find a new rhythm without leaving FL Studio. **Random** changes which chop plays on each hit. **Move & Trim** changes where the hits land and shortens their tails. Four banks keep different patterns ready to play.
+Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them out on a 16-step ribbon, and rearranges them with one roll of the dice. You can hear it right away. Press **PLAY**, and FL Studio doesn't need to be running.
 
-![Epsilon Chop editor showing the waveform, chop markers and Jersey Bounce pattern](preview.png)
+![Epsilon Chop v0.2.0](preview.png)
 
-[Download Epsilon Chop v0.1.0 for Projucer](Epsilon-Chop-v0.1.0-Projucer.zip)
+[Download the v0.2.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.2.0-Projucer.zip)
 
-## Build and install on a 2019 Intel Mac
+## What changed in v0.2.0
 
-This source package includes `Epsilon-Chop.jucer`, the generated Xcode project, C++ source, and JUCE 8.0.17-security modules. The Xcode target is **x86_64 VST3**, with a macOS 11.0 deployment target. The Linux VST3 built and passed the included tests. Building and scanning the macOS VST3 are the remaining host checks.
+v0.1.0 seemed broken because nothing made a sound unless FL Studio's transport was running *and* Play Pattern was on. **Random** only changed the numbers in the step boxes. FL's step sequencer plays **C5**, but chops started at C3, so that was silent too.
 
-1. Extract the ZIP and keep the `JUCE`, `JuceLibraryCode`, `Source`, and `Builds` folders together.
-2. Open `Builds/MacOSX/Epsilon Chop.xcodeproj` in Xcode. Select **Epsilon Chop - VST3**, choose **My Mac**, and use **Product → Build**. To edit the project configuration, open `Epsilon-Chop.jucer` in JUCE 8 Projucer and save the Xcode exporter again.
-3. The Xcode target copies `Epsilon Chop.vst3` into `~/Library/Audio/Plug-Ins/VST3`. The build output is also under `Builds/MacOSX/build/Debug` or `Release`, depending on the build configuration.
-4. In FL Studio, choose **Options → Manage plugins**, enable **Verify plugins**, and click **Find installed plugins**. Search for **Epsilon Chop**. Add it as a generator in the **Channel Rack**. [Image-Line plug-in installation guide](https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/basics_externalplugins.htm)
+| Problem in v0.1.0 | v0.2.0 |
+| --- | --- |
+| No way to hear the pattern without starting FL | **PLAY** button with its own clock. It uses FL's tempo when FL reports one, and the internal tempo otherwise |
+| Random only swapped chop numbers | **RANDOMIZE** with a **Chaos** amount. Toggles choose what it changes: Chops, Rhythm, Stutter, Reverse, Pitch and Gate |
+| Three chop modes | **Transient** with Sensitivity, **Beat** at 1/4, 1/8 or 1/16 and snapped to hits, **Grid**, **Random** with re-chop, and **Manual**. Every cut snaps to a zero crossing |
+| C5 was silent | **MIDI root C5 = Chop 01**, and every key wraps onto a chop. The root is changeable in the footer |
+| Steps had only a chop and a gate | Each step also has **ratchet** (1–4 repeats), **pitch** (±12 st) and **reverse** |
+| Whole UI redrawn 30 times a second, Debug at -O0 | Waveform and ribbon are cached, and only the playhead redraws. Debug is optimised (-O3) |
 
-Build the Release target from Terminal while inside the extracted folder.
+Saved v0.1.0 sessions still load. The plug-in IDs (`EpsS` / `EpCh`) and the `pattern` / `output` parameters are unchanged.
+
+## Build on the 2019 Intel MacBook Pro
+
+1. Unzip and keep `JUCE`, `JuceLibraryCode`, `Source`, `Resources` and `Builds` together.
+2. Double-click **`Epsilon-Chop.jucer`**. In Projucer, click the Xcode button, or open `Builds/MacOSX/Epsilon Chop.xcodeproj` directly.
+3. Pick **Epsilon Chop - All** and **My Mac**, then **Product → Build**. Debug and Release are both -O3. The VST3 is copied to `~/Library/Audio/Plug-Ins/VST3` and the AU to `~/Library/Audio/Plug-Ins/Components`.
+4. In FL Studio, choose **Options → Manage plugins → Find installed plugins**. Add **Epsilon Chop** to the Channel Rack as a generator.
+
+The **Epsilon Chop - Standalone Plugin** target builds an app, so you can try chopping without opening FL.
+
+The CMake build is an alternative. Put JUCE 9.0.5 in `JUCE/`, which the ZIP already has, then run:
 
 ```sh
-xcodebuild -project 'Builds/MacOSX/Epsilon Chop.xcodeproj' \
-  -target 'Epsilon Chop - VST3' -configuration Release build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEPSILON_CHOP_BUILD_TESTS=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-## First session
+## Using it
 
-1. Click **Load Sample** or drop a file onto the editor. Use a mono or stereo WAV, AIFF, FLAC or MP3 at 8–192 kHz. The limit is the smaller of 120 seconds and 8 million frames.
-2. Start with **Grid / 8 chops** for a cleanly trimmed loop. Try **Transient** for drums, consonants, or a sample with uneven attacks. Click the colored regions to hear them.
-3. Choose **B** for Jersey Bounce, turn on **Play Pattern**, and press Play in FL Studio. The highlighted step follows the host. You can also play the chops directly in the Piano Roll from **MIDI note 36** upward.
-4. Try **Random** to swap the chops on the same hits. Try **Move & Trim** to shift the hits and tighten the gaps. **Undo** backs out the last edit.
+1. **Load.** Drop a WAV, AIFF, FLAC or MP3 anywhere on the window, or click **LOAD SAMPLE**. The limit is 120 seconds.
+2. **Chop.** Choose a mode in the bar above the waveform. Click a chop to hear it. Drag a cut line to move it, which switches to Manual. Double-click to add a cut, and right-click a cut to remove it. **LOOP BPM** is detected from the loop length. Drag it to correct it, and double-click it to re-detect.
+3. **Arrange.** Drag a chop from the waveform onto any step. Scroll over a step to change its chop. Right-click or double-click a step to make it a rest. **IN ORDER** lays the chops out as recorded, and **GROOVES** loads starting rhythms. **A–D** are four independent banks.
+4. **Play.** Press **PLAY** to preview on the internal clock. Turn on **HOST SYNC** to play the bank whenever FL's transport runs, locked to the bar. **RATE** sets 1/8, 1/16 or 1/32 steps, and **SWING** adds shuffle. **TEMPO FIT** repitches the sample so its loop BPM matches the tempo, which keeps chops on the grid.
+5. **Flip it.** Pick what **RANDOMIZE** may change, set **CHAOS**, and roll. **UNDO** steps back through up to 32 edits.
+6. **Shape a step.** Click a step, then set its chop, gate, pitch, ratchet and reverse in the **STEP** panel.
+7. **Piano Roll.** C5 plays Chop 01, C#5 plays Chop 02, and so on. Keys wrap around, so every note plays something.
 
-## Controls
+Each instance saves its decoded sample inside the FL project, so projects reopen even if the original file has moved.
 
-| Control | What it does |
-| --- | --- |
-| **Load Sample** | Imports one local audio file. The editor shows its name, length, sample rate and chop count. |
-| **Grid / Transient / Manual** | Grid divides the file equally. Transient picks strong attacks and uses a grid when it finds none. Manual lets you edit the boundaries directly. On first entry it takes the current cuts as its starting point. |
-| **4 / 8 / 16 / 32 chops** | Sets the number of grid chops or the maximum number in Transient mode. Manual uses the markers you place. |
-| **Waveform** | Click a region to preview and select its chop. In Manual, double-click open waveform space to add a boundary, drag an internal boundary to move it, or right-click a boundary to remove it. The playhead shows where the current chop is reading. |
-| **Stop Preview** | Fades out the waveform audition. |
-| **Output** | Sets the instrument level from −24 to +6 dB. Default is −3 dB. |
-| **Play Pattern** | Loops the current 16-step pattern in sixteenth notes on the FL Studio transport. One cycle spans four quarter notes. Leave it off to arrange chops directly in the Piano Roll. |
-| **A / B / C / D** | Selects a pattern bank. Each bank has its own chop assignments, rests, and gates. The waveform and its markers are shared by the four banks. |
-| **Load Groove** | Replaces the selected bank with Straight, Jersey Bounce, Drill Space, or Dembow Pocket. These are starting rhythms you can edit. |
-| **Step row / Chop picker** | Click a step to edit it, then choose a numbered chop or **Rest**. Right-click or Shift-click a step to toggle between a rest and the selected waveform chop. The small bar shows the gate. |
-| **Gate** | Sets the selected hit to 10–100% of one step. A shorter chop finishes at its own end. A 50% gate is about 62.5 ms at 120 BPM. |
-| **Random** | Picks new chop assignments for occupied steps and keeps their timing, rests and gates. Requires at least two chops and one occupied step. |
-| **Move & Trim** | Moves hits into a new set of step positions, keeps their chop order, and caps gates at 25%, 50%, or 75% per hit. When all 16 steps are filled it rotates the sequence. Repeated presses can shorten gates further. |
-| **Undo** | Steps back through up to 24 pattern or marker edits since the current sample was loaded. |
+## Validation (Linux build of the same source)
 
-## Make a variation
+- Engine tests cover:
+  - all five chop modes
+  - zero-crossing snap
+  - randomizer invariants per toggle
+  - the internal clock with no host (step timing at 1/8 and 1/16)
+  - host-synced output that is identical at 64, 257 and 1,024-frame blocks
+  - ratchet retrigger timing
+  - reverse playback
+  - octave-up length
+- Processor tests cover:
+  - WAV import and onset timing within 21 ms
+  - mode switching, re-chop, and drag-to-manual
+  - randomize and undo with bank isolation
+  - MIDI root and wrapping
+  - PLAY with FL stopped
+  - host sync start and stop
+  - sample-exact project recall
+  - rejection of a truncated state
+  - loading a v0.1.0 session
+- pluginval strictness 8: **SUCCESS**.
+- Full editor repaint takes about 5 ms in software rendering. In normal use only the playhead strip and ribbon redraw.
 
-- **Jersey bounce** — Try Bank B with a vocal or keys loop. Listen to the late double hit on steps 11 and 12. Press **Random** to change the phrase on that rhythm.
-- **Drill pocket** — Try Bank C with a sustained texture. Press **Move & Trim**, then raise the gate of a hit you want to ring into a gap.
-- **Dembow fill** — Keep a main pattern in A and audition D as a turnaround. For an exact bar-by-bar arrangement, turn off **Play Pattern** and write the chop notes in FL Studio’s Piano Roll. Chop 01 is MIDI note 36, Chop 02 is 37, and so on through the available chops.
+The macOS build and FL Studio scan are still to be checked on the Mac. `.github/workflows/build.yml` builds a universal VST3, AU and Standalone on macOS 15, runs the tests and pluginval, and uploads them with `INSTALL.txt`.
 
-Playback follows the host grid at the original sample pitch and speed. A new chop chokes the previous one with a short fade. The original audio file stays intact, and each instance embeds its decoded sample, markers and banks in its saved plug-in state. Long stereo samples can add up to about 64 MB per instance to the project state.
-
-[Design, research sources and validation](DESIGN.md) · [JUCE 8 license and included notices](https://github.com/juce-framework/JUCE/blob/8.0.17-security/LICENSE.md)
+[Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)

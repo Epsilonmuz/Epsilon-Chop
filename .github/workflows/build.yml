@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch JUCE 9.0.5
+        run: git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Configure (Release, universal)
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DEPSILON_CHOP_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Engine and processor tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: pluginval (strictness 5)
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --skip-gui-tests --validate-in-process \
+            --validate "build/EpsilonChop_artefacts/Release/VST3/Epsilon Chop.vst3"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp -R "build/EpsilonChop_artefacts/Release/VST3/Epsilon Chop.vst3" dist/
+          cp -R "build/EpsilonChop_artefacts/Release/AU/Epsilon Chop.component" dist/
+          cp -R "build/EpsilonChop_artefacts/Release/Standalone/Epsilon Chop.app" dist/
+          cat > dist/INSTALL.txt <<'TXT'
+          Epsilon Chop v0.2.0
+
+          1. Copy "Epsilon Chop.vst3" to ~/Library/Audio/Plug-Ins/VST3
+             and "Epsilon Chop.component" to ~/Library/Audio/Plug-Ins/Components
+          2. These builds are not notarised. Remove the download quarantine once in Terminal:
+               xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Epsilon Chop.vst3"
+               xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Epsilon Chop.component"
+          3. FL Studio: Options > Manage plugins > Find installed plugins, then add Epsilon Chop to the Channel Rack.
+          TXT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Epsilon-Chop-macOS
+          path: dist
