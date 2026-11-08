@@ -78,4 +78,4 @@ Each instance saves its decoded sample inside the FL project, so projects reopen
 
 The macOS build and FL Studio scan are still to be checked on the Mac. `.github/workflows/build.yml` builds a universal VST3, AU and Standalone on macOS 15, runs the tests and pluginval, and uploads them with `INSTALL.txt`.
 
-**[Full manual: every control and how it works](MANUAL.md)** · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)
+**[Illustrated manual (PDF)](Manual/Epsilon-Chop-Manual.pdf)** · [HTML version](Manual/Epsilon-Chop-Manual.html) · [Text manual](MANUAL.md) · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)
