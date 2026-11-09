@@ -1231,28 +1231,10 @@ void EpsilonChopEditor::paint(juce::Graphics& g)
 
 void EpsilonChopEditor::paintHeader(juce::Graphics& g)
 {
-    // Logo mark: a rounded square cut into slanted coloured strips.
-    const auto mark = juce::Rectangle<float>(24.0f, 18.0f, 36.0f, 36.0f);
-    g.saveState();
-    juce::Path clip;
-    clip.addRoundedRectangle(mark, 9.0f);
-    g.reduceClipRegion(clip);
-    for (int i = 0; i < 5; ++i)
-    {
-        juce::Path strip;
-        const auto x = mark.getX() - 14.0f + i * 12.0f;
-        strip.addQuadrilateral(x, mark.getBottom(), x + 10.0f, mark.getBottom(), x + 24.0f, mark.getY(), x + 14.0f, mark.getY());
-        g.setColour(chopColour(i));
-        g.fillPath(strip);
-    }
-    g.restoreState();
-
-    g.setColour(text);
-    g.setFont(sans(21.0f, true));
-    g.drawText("EPSILON CHOP", 72, 15, 220, 26, juce::Justification::centredLeft);
-    g.setColour(faint);
-    g.setFont(sans(10.0f, true));
-    g.drawText(juce::String::fromUTF8("SLICE  ·  SHUFFLE  ·  FLIP"), 73, 39, 220, 14, juce::Justification::centredLeft);
+    // Epsilon Sounds product mark (shared design system)
+    epsilon_ui::drawProductMark(g, { 24.0f, 21.0f }, 1.0f, epsilon_ui::Tier::Epsilon, "Chop",
+                                juce::String::fromUTF8("Slice  \xc2\xb7  shuffle  \xc2\xb7  flip"),
+                                [](float h, bool b) { return sans(h, b); });
 
     // Sample pill
     const auto pill = juce::Rectangle<float>(322.0f, 20.0f, 540.0f, 34.0f);
