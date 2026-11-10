@@ -68,11 +68,13 @@ jobs:
         run: |
           xcodebuild -project "Builds/iOS/Epsilon Chop.xcodeproj" -target "Epsilon Chop - Standalone Plugin" \
                      -configuration Release -sdk iphonesimulator ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-                     CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/simbuild" -quiet build
+                     CODE_SIGNING_ALLOWED=NO -quiet build
       - name: Run it in an iPhone simulator
         run: |
           set -e
-          APP=$(find simbuild -name "Epsilon Chop.app" -type d | head -1)
+          # Projucer projects build into Builds/iOS/build/<config>; the simulator build ran last
+          APP=$(find Builds/iOS/build -name "Epsilon Chop.app" -type d | head -1)
+          test -n "$APP" || { echo "::error::no app was built"; exit 1; }
           echo "App: $APP"
           DEV=$(xcrun simctl list devices available | grep -E "iPhone 1[5-9]( Pro)? \(" | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
           echo "Simulator: $DEV"
