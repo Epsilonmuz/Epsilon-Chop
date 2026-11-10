@@ -10,6 +10,26 @@ Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 1
 
 [Download the v0.3.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.3.0-Projucer.zip)
 
+## iPhone app
+
+The same Chop, as a standalone iPhone app with a touch layout: **LOAD** a sample from Files, voice memos or AirDrop (WAV, AIFF, MP3, M4A), see the colour-coded chops, then four pages:
+
+- **PADS**: 4 x 4 finger-drum pads (pad 1 bottom left, like an MPC), several at once; 17-32 on a second bank
+- **PATTERN**: the 16 steps, tap one and pick its chop with < >, REST, REV, PIN for Dovetail, CHAOS, DOVETAIL, SWING, banks A-D, IN ORDER, CLEAR, UNDO
+- **SOUND**: PITCH with MPC / KEEP LENGTH, VINTAGE, DRIVE, OUTPUT, CHOKE, HIT ALIGN
+- **EXPORT**: share the loop (1, 2, 4 or 8 passes), every chop, or one chop through the share sheet (AirDrop, Messages, FL Studio Mobile...). Everything is also kept in *Files > On My iPhone > Epsilon Chop*.
+
+**Put it on your iPhone** (needs Xcode; a free Apple ID works for your own phone):
+
+1. Open `Epsilon-Chop.jucer` in Projucer, pick the **Xcode (iOS)** exporter, *Save and Open in IDE*.
+2. In Xcode: click the project, target **Epsilon Chop - Standalone Plugin** > *Signing & Capabilities* > tick *Automatically manage signing* and choose your Apple ID as the Team (Xcode > Settings > Accounts to add it). If Xcode says the bundle ID is taken, change `com.epsilonsounds.chop` to something of your own.
+3. Plug in the iPhone, choose it at the top of Xcode, press Run.
+4. On the iPhone the first time: *Settings > Privacy & Security > Developer Mode* on, and *Settings > General > VPN & Device Management* > trust your Apple ID.
+
+With a free Apple ID the app runs for 7 days, then press Run again. The Apple Developer Program ($99/year) removes that limit and allows TestFlight and the App Store. JUCE is AGPLv3 or commercial: selling a closed-source app on the App Store needs a commercial JUCE licence.
+
+GitHub builds it for iPhone and the iPhone simulator on every push, launches it in the simulator and checks it keeps running.
+
 ## New in v0.5.0: pitch the whole loop
 
 **PITCH** (bottom row, -24 to +24 st) pitches everything Chop plays, including MIDI, the computer keyboard and DRAG LOOP, on top of each step's own pitch. **PITCH MODE**: **MPC** pitches the classic sampler way (down = slower, darker, heavier; every chop still starts on its step), **KEEP** changes only the pitch so each chop keeps its length. Both are automatable. [Manual](MANUAL.md#10c-pitch-the-whole-loop).
