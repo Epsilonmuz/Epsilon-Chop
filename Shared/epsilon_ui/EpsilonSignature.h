@@ -44,4 +44,15 @@ inline juce::Colour keycapInk(const juce::Button& b, Tier tier)
     if (! b.isEnabled()) return p.inkMuted.withAlpha(0.45f);
     return b.getToggleState() ? p.ink : p.inkMuted;
 }
+
+// Button label for a keycap: the button's own colours and font, lifted clear of the lume bar on toggles.
+inline void keycapText(juce::Graphics& g, juce::TextButton& b, const juce::Font& f)
+{
+    const bool toggle = b.getClickingTogglesState() || b.getToggleState();
+    auto colour = b.findColour(b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId);
+    if (! b.isEnabled()) colour = colour.withMultipliedAlpha(0.45f);
+    g.setColour(colour);
+    g.setFont(f);
+    g.drawFittedText(b.getButtonText(), b.getLocalBounds().reduced(4, 0).withTrimmedBottom(toggle ? 5 : 0), juce::Justification::centred, 1);
+}
 }
