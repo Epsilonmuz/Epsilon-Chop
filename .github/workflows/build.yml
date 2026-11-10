@@ -88,6 +88,9 @@ jobs:
           xcrun simctl io "$DEV" screenshot shots/iphone-simulator.png
           echo "### iPhone simulator" >> "$GITHUB_STEP_SUMMARY"
           echo "Launched and still running after 12 s." >> "$GITHUB_STEP_SUMMARY"
+          # a small copy of the screenshot in the log, so it can be checked without downloading
+          sips -Z 700 -s format jpeg -s formatOptions 70 shots/iphone-simulator.png --out shots/small.jpg >/dev/null
+          base64 -i shots/small.jpg | tr -d '\n' | fold -w 4000 | sed 's/^/SHOT:/' 
       - uses: actions/upload-artifact@v4
         with:
           name: EpsilonChop-iPhone-simulator-screenshot
