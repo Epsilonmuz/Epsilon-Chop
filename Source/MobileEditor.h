@@ -134,6 +134,7 @@ private:
     juce::ScopedMessageBox shareBox;
     juce::String toast;
     int toastTicks = 0, page = 0, extraHeight = 0;
+    juce::BorderSize<int> appliedInsets;
     float scale = 1.0f;
     std::uint64_t seenRevision = ~0ull;
     int seenSlice = -2, seenFrame = -2, seenStep = -2;

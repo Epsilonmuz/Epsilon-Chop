@@ -23,7 +23,16 @@ juce::BorderSize<int> safeInsets()
 {
    #if JUCE_IOS
     if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-        return d->safeAreaInsets;
+    {
+        if (! d->safeAreaInsets.isEmpty())
+            return d->safeAreaInsets;
+        // Before the window is up iOS may not report insets yet: fall back to what the
+        // system keeps for itself (status bar, Dynamic Island, home bar).
+        const auto t = d->totalArea, u = d->userArea;
+        if (u != t && ! u.isEmpty())
+            return { u.getY() - t.getY(), u.getX() - t.getX(), t.getBottom() - u.getBottom(), t.getRight() - u.getRight() };
+        return { 59, 0, 34, 0 };   // a modern iPhone, until iOS tells us
+    }
    #endif
     return {};
 }
@@ -583,6 +592,7 @@ void Editor::resized()
 {
     // Fit the 390 x 760 design inside the screen's safe area (notch, home bar), scaled to fit.
     const auto insets = safeInsets();
+    appliedInsets = insets;
     auto area = insets.subtractedFrom(getLocalBounds());
     scale = std::min(area.getWidth() / (float) designWidth, area.getHeight() / (float) designHeight);
     const auto x = area.getX() + (area.getWidth() - designWidth * scale) * 0.5f;
@@ -716,6 +726,8 @@ void Editor::paintContent(juce::Graphics& g)
 
 void Editor::timerCallback()
 {
+    if (safeInsets() != appliedInsets)        // iOS reports the real safe area once the window is up
+        resized();
     if (processor.revisionNow() != seenRevision)
         pull();
     const auto playing = processor.isPlaying();
