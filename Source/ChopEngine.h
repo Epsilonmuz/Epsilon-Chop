@@ -34,6 +34,14 @@ enum class VoiceOrigin : int { midi, pattern, preview, keys };
 enum class Choke : int { cut = 0, gate = 1, poly = 2 };
 constexpr int chokeCount = 3;
 
+// How the master PITCH knob pitches the whole loop.
+// MPC: classic sampler repitch, a chop pitched down also plays slower and darker (the start of
+// every chop still lands on its step). KEEP: pitch changes, each chop keeps its length
+// (two overlapping 40 ms grains per voice).
+enum class PitchMode : int { mpc = 0, keep = 1 };
+constexpr int pitchModeCount = 2;
+constexpr double maxMasterPitch = 24.0;
+
 // Vintage sampler character on the output.
 enum class Vintage : int { clean = 0, sixty = 1, twelveHundred = 2, threeThousand = 3 };
 constexpr int vintageCount = 4;
@@ -204,6 +212,8 @@ struct PlaySettings
     float align = 0.0f;         // Hit Align 0..1: how much of each chop's lead-in is compensated
     Vintage vintage = Vintage::clean;
     float drive = 0.0f;         // 0..1
+    double masterPitch = 0.0;   // semitones, -24..+24, for the whole loop
+    PitchMode pitchMode = PitchMode::mpc;
 };
 
 class Engine
@@ -241,6 +251,8 @@ private:
         int filter = 0, slice = -1, note = -1;
         float velocity = 0.0f;
         VoiceOrigin origin = VoiceOrigin::midi;
+        double shift = 1.0;     // KEEP mode: pitch ratio on top of the time rate (1 = none)
+        std::array<double, 2> grainOffset {};   // KEEP mode: each grain's alignment (WSOLA)
 
         bool active() const noexcept { return elapsed < frames; }
     };
@@ -269,6 +281,9 @@ private:
     void advancePattern(int sampleInBlock) noexcept;
     void start(int slice, float velocity, VoiceOrigin, int gateFrames, int pitch, bool reverse, int note, int skip) noexcept;
     float interpolate(const float*, const Voice&) const noexcept;
+    float interpolateAt(const float*, const Voice&, double position) const noexcept;
+    double pitchRatio(int stepPitch) const noexcept;
+    double alignGrain(const Voice&, int k) const noexcept;   // the rate a voice reads at (MPC: includes master)
     void configureVintage(Vintage, float drive) noexcept;
     void applyVintage(float& left, float& right) noexcept;
 
@@ -283,6 +298,9 @@ private:
     float align = 0.0f;
     int leadLimit = 2646, fadeInFrames = 14;
     Vintage vintage = Vintage::clean, configuredVintage = Vintage::clean;
+    double masterPitch = 0.0;
+    PitchMode pitchMode = PitchMode::mpc;
+    int grainFrames = 1920;
     float drive = 0.0f, configuredDrive = -1.0f, preGain = 1.0f, makeup = 1.0f, levels = 0.0f;
     double holdStep = 1.0, holdPhase = 1.0;
     float heldLeft = 0.0f, heldRight = 0.0f;

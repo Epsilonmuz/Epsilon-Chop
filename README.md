@@ -1,14 +1,18 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.4.0 · sample chopper instrument (VST3 · AU · Standalone)**
+**Epsilon Sounds · v0.5.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
 **Pin the chop you love. Epsilon Chop builds the rest around it.**
 
 Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 16-step ribbon and flips them with one roll of the dice. Pin one chop and **Dovetail** picks every other chop so it flows out of the one before it: same key, smooth level, matching tone, all the way round the bar. **Hit Align** lands every hit exactly on the grid whatever chop goes where, **CUT** choke works like FL Studio's "Cut by 1" on every pad, and **VINTAGE** adds the punch and grit of classic 12-bit samplers. Finger-drum chops straight from your computer keyboard.
 
-![Epsilon Chop v0.4.0](preview.png)
+![Epsilon Chop v0.5.0](preview.png)
 
 [Download the v0.3.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.3.0-Projucer.zip)
+
+## New in v0.5.0: pitch the whole loop
+
+**PITCH** (bottom row, -24 to +24 st) pitches everything Chop plays, including MIDI, the computer keyboard and DRAG LOOP, on top of each step's own pitch. **PITCH MODE**: **MPC** pitches the classic sampler way (down = slower, darker, heavier; every chop still starts on its step), **KEEP** changes only the pitch so each chop keeps its length. Both are automatable. [Manual](MANUAL.md#10c-pitch-the-whole-loop).
 
 ## New in v0.4.0: export to FL Studio
 

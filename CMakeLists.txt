@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonChop VERSION 0.4.0 LANGUAGES C CXX)
+project(EpsilonChop VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 
@@ -11,7 +11,7 @@ if(APPLE)
 endif()
 
 juce_add_plugin(EpsilonChop
-    VERSION 0.4.0
+    VERSION 0.5.0
     COMPANY_NAME "Epsilon Sounds"
     BUNDLE_ID com.epsilonsounds.chop
     IS_SYNTH TRUE

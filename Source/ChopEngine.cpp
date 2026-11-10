@@ -979,6 +979,7 @@ void Engine::prepare(double outputRate, float initialGain)
     microfadeFrames = std::max(1, static_cast<int>(std::lround(sampleRate * 0.002)));
     fadeInFrames = std::max(1, static_cast<int>(std::lround(sampleRate * 0.0003)));
     leadLimit = std::max(1, static_cast<int>(std::lround(sampleRate * maxLeadSeconds)));
+    grainFrames = std::max(64, static_cast<int>(std::lround(sampleRate * 0.040)) & ~1);
     gain = gainTarget = initialGain;
     gainStep = static_cast<float>(1.0 - std::exp(-1.0 / (sampleRate * 0.008)));
     configuredDrive = -1.0f;
@@ -1088,6 +1089,8 @@ void Engine::beginBlock(const Session& session, const Transport& transport,
     swing = std::clamp(settings.swing, 0.0f, 0.6f);
     choke = settings.choke;
     align = std::clamp(settings.align, 0.0f, 1.0f);
+    masterPitch = std::isfinite(settings.masterPitch) ? std::clamp(settings.masterPitch, -maxMasterPitch, maxMasterPitch) : 0.0;
+    pitchMode = settings.pitchMode;
     const auto wantedDrive = std::clamp(settings.drive, 0.0f, 1.0f);
     if (settings.vintage != configuredVintage || std::abs(wantedDrive - configuredDrive) > 1.0e-4f)
         configureVintage(settings.vintage, wantedDrive);
@@ -1195,8 +1198,16 @@ int Engine::leadFrames(int slice, int pitch, bool reverse) const noexcept
 {
     if (align <= 0.0f || reverse || sample == nullptr || slices == nullptr || slice < 0 || slice >= slices->count)
         return 0;
-    const auto ratio = std::clamp(baseRatio * speed * std::exp2(std::clamp(pitch, -maxPitch, maxPitch) / 12.0), 1.0 / 16.0, 16.0);
+    const auto ratio = pitchRatio(pitch);
     return std::min(leadLimit, static_cast<int>(std::lround(align * slices->hit[static_cast<std::size_t>(slice)] / ratio)));
+}
+
+double Engine::pitchRatio(int stepPitch) const noexcept
+{
+    auto semis = static_cast<double>(std::clamp(stepPitch, -maxPitch, maxPitch));
+    if (pitchMode == PitchMode::mpc)
+        semis += masterPitch;
+    return std::clamp(baseRatio * speed * std::exp2(semis / 12.0), 1.0 / 16.0, 16.0);
 }
 
 void Engine::trigger(int slice, float velocity, VoiceOrigin origin, int gateFrames, int pitch, bool reverse,
@@ -1219,8 +1230,7 @@ void Engine::start(int slice, float velocity, VoiceOrigin origin, int gateFrames
         voice = std::min_element(voices.begin(), voices.end(),
                                 [](const auto& a, const auto& b) { return a.frames - a.elapsed < b.frames - b.elapsed; });
 
-    const auto ratio = std::clamp(baseRatio * speed * std::exp2(std::clamp(pitch, -maxPitch, maxPitch) / 12.0),
-                                  1.0 / 16.0, 16.0);
+    const auto ratio = pitchRatio(pitch);
     const auto first = slices->edge[slice];
     const auto last = slices->edge[slice + 1];
     const auto natural = std::max(1, static_cast<int>(std::ceil((last - first) / ratio)));
@@ -1237,7 +1247,8 @@ void Engine::start(int slice, float velocity, VoiceOrigin origin, int gateFrames
     v.frames = length;
     v.fadeIn = std::min(fadeInFrames, (length - 1) / 2);
     v.fadeOut = std::min(microfadeFrames, (length - 1) / 2);
-    v.filter = std::clamp(static_cast<int>(std::ceil(16.0 * std::log2(std::max(1.0, ratio)))), 0, cutoffCount - 1);
+    v.shift = pitchMode == PitchMode::keep && std::abs(masterPitch) > 1.0e-3 ? std::exp2(masterPitch / 12.0) : 1.0;
+    v.filter = std::clamp(static_cast<int>(std::ceil(16.0 * std::log2(std::max(1.0, ratio * v.shift)))), 0, cutoffCount - 1);
     v.slice = slice;
     v.note = note;
     v.velocity = std::clamp(velocity, 0.0f, 1.0f);
@@ -1295,12 +1306,49 @@ void Engine::advancePattern(int sampleInBlock) noexcept
         pending[static_cast<std::size_t>(pendingCount++)] = hit;
 }
 
+// KEEP mode: a grain about to fade in is shifted (up to +-8 ms) to where its waveform best
+// matches the grain fading out, so the crossfade doesn't cancel or beat (WSOLA).
+double Engine::alignGrain(const Voice& voice, int k) const noexcept
+{
+    const auto* pcm = sample->pcm[0].data();
+    const auto other = 1 - k;
+    const auto drift = voice.increment * (voice.shift - 1.0);
+    const auto rate = voice.increment * voice.shift;                   // read speed of either grain
+    const auto otherLocal = (voice.elapsed + other * (grainFrames / 2)) % grainFrames;
+    const auto otherAt = voice.position + (otherLocal - grainFrames * 0.5) * drift + voice.grainOffset[static_cast<std::size_t>(other)];
+    const auto newAt = voice.position + (0 - grainFrames * 0.5) * drift;
+    const int span = std::max(8, static_cast<int>(sampleRate * 0.008));
+    const int length = std::max(32, grainFrames / 8);
+    auto value = [&](double at) { return pcm[std::clamp(static_cast<int>(at), voice.start, voice.end - 1)]; };
+    std::array<float, 512> target {};
+    const int n = std::min(length, static_cast<int>(target.size()));
+    for (int t = 0; t < n; ++t) target[static_cast<std::size_t>(t)] = value(otherAt + t * rate);
+    double best = -1.0e30, bestOffset = 0.0;
+    for (int d = -span; d <= span; d += 2)
+    {
+        double dot = 0.0, energy = 1.0e-9;
+        for (int t = 0; t < n; t += 2)
+        {
+            const auto x = value(newAt + d + t * rate);
+            dot += x * target[static_cast<std::size_t>(t)];
+            energy += x * x;
+        }
+        const auto score = dot / std::sqrt(energy);
+        if (score > best) { best = score; bestOffset = d; }
+    }
+    return bestOffset;
+}
+
 float Engine::interpolate(const float* pcm, const Voice& voice) const noexcept
 {
-    const auto position = voice.position;
+    return interpolateAt(pcm, voice, voice.position);
+}
+
+float Engine::interpolateAt(const float* pcm, const Voice& voice, double position) const noexcept
+{
     const auto integral = static_cast<int>(std::floor(position));
     const auto fraction = position - integral;
-    if (std::abs(std::abs(voice.increment) - 1.0) < 1.0e-12 && fraction < 1.0e-12)
+    if (std::abs(std::abs(voice.increment) - 1.0) < 1.0e-12 && voice.shift == 1.0 && fraction < 1.0e-12)
         return pcm[std::clamp(integral, voice.start, voice.end - 1)];
 
     const auto phase = std::clamp(static_cast<int>(fraction * phases + 0.5), 0, phases);
@@ -1355,8 +1403,33 @@ void Engine::render(int sampleInBlock, float& left, float& right) noexcept
             }
 
             const auto amp = voice.velocity * envelope;
-            const auto l = interpolate(sample->pcm[0].data(), voice);
-            const auto r = sample->channels == 2 ? interpolate(sample->pcm[1].data(), voice) : l;
+            float l, r;
+            if (voice.shift == 1.0)
+            {
+                l = interpolate(sample->pcm[0].data(), voice);
+                r = sample->channels == 2 ? interpolate(sample->pcm[1].data(), voice) : l;
+            }
+            else
+            {
+                // KEEP: two Hann-windowed grains half a grain apart (their windows sum to 1). Each
+                // reads at the shifted rate around where the chop is in time, so the chop's
+                // length and its place on the grid don't change, only its pitch.
+                l = r = 0.0f;
+                const auto drift = voice.increment * (voice.shift - 1.0);
+                for (int k = 0; k < 2; ++k)
+                    if ((voice.elapsed + k * (grainFrames / 2)) % grainFrames == 0 && voice.elapsed > 0)
+                        voice.grainOffset[static_cast<std::size_t>(k)] = alignGrain(voice, k);
+                for (int k = 0; k < 2; ++k)
+                {
+                    const auto local = (voice.elapsed + k * (grainFrames / 2)) % grainFrames;
+                    const auto phase = static_cast<double>(local) / grainFrames;
+                    const auto w = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * phase));
+                    const auto at = voice.position + (local - grainFrames * 0.5) * drift + voice.grainOffset[static_cast<std::size_t>(k)];
+                    const auto gl = interpolateAt(sample->pcm[0].data(), voice, at);
+                    l += w * gl;
+                    r += w * (sample->channels == 2 ? interpolateAt(sample->pcm[1].data(), voice, at) : gl);
+                }
+            }
             left += amp * l;
             right += amp * r;
             if (voice.releaseLength == 0 && !reported)

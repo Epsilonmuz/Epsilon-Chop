@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.4.0"
+<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.5.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.chop"
               pluginName="Epsilon Chop" pluginDesc="Sample chopper and pattern instrument"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"

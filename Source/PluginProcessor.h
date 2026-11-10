@@ -143,6 +143,8 @@ private:
     std::atomic<float>* alignParameter = nullptr;
     std::atomic<float>* vintageParameter = nullptr;
     std::atomic<float>* driveParameter = nullptr;
+    std::atomic<float>* masterPitchParameter = nullptr;
+    std::atomic<float>* pitchModeParameter = nullptr;
     juce::AbstractFifo keyFifo { 64 };
     std::array<int, 64> keyEvents {};
     chop::Engine engine;

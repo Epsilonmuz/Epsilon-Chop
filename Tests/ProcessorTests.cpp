@@ -315,6 +315,23 @@ void testExport(EpsilonChopProcessor& processor)
             "a changed loop gets a new name, the old file stays");
     require(processor.exportPattern(4).existsAsFile(), "multi-bar export works");
 
+    // Master pitch reaches the printed loop, in both modes, and the loop keeps its length
+    for (int mode = 0; mode < 2; ++mode)
+    {
+        auto* pm = processor.parameters.getParameter("pitchMode");
+        pm->setValueNotifyingHost(pm->convertTo0to1(static_cast<float>(mode)));
+        auto* mp = processor.parameters.getParameter("masterPitch");
+        mp->setValueNotifyingHost(mp->convertTo0to1(-12.0f));
+        const auto down = processor.exportPattern(1);
+        mp->setValueNotifyingHost(mp->convertTo0to1(0.0f));
+        const auto flat = processor.exportPattern(1);
+        double r1 = 0.0, r2 = 0.0;
+        auto a = readWav(down, fileRate), b = readWav(flat, fileRate);
+        require(a.getNumSamples() == b.getNumSamples(), "a pitched loop is still exactly one pattern long");
+        for (int i = 0; i < a.getNumSamples(); ++i) { const auto d = a.getSample(0, i) - b.getSample(0, i); r1 += d * d; r2 += b.getSample(0, i) * b.getSample(0, i); }
+        require(r1 > 0.05 * r2, mode == 0 ? "MPC pitch is printed into DRAG LOOP" : "KEEP LENGTH pitch is printed into DRAG LOOP");
+    }
+
     folder.deleteRecursively();
     std::cout << "Export: chop, all chops, seamless pattern loop, file reuse and no overwrites passed.\n";
 }

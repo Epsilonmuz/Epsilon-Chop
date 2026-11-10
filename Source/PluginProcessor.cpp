@@ -40,6 +40,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout parameterLayout()
                juce::StringArray { "Clean", "12-bit 40k", "12-bit 26k", "16-bit Warm" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { "drive", 1 }, "Drive",
                juce::NormalisableRange<float> { 0.0f, 100.0f, 1.0f }, 35.0f, percent));
+    // v0.5.0: master pitch for the whole loop
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { "masterPitch", 2 }, "Pitch",
+               juce::NormalisableRange<float> { -24.0f, 24.0f, 0.01f }, 0.0f,
+               juce::AudioParameterFloatAttributes {}.withLabel("st")));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "pitchMode", 2 }, "Pitch Mode",
+               juce::StringArray { "MPC", "Keep Length" }, 0));
     return layout;
 }
 
@@ -352,6 +358,8 @@ EpsilonChopProcessor::EpsilonChopProcessor()
     alignParameter = parameters.getRawParameterValue("align");
     vintageParameter = parameters.getRawParameterValue("vintage");
     driveParameter = parameters.getRawParameterValue("drive");
+    masterPitchParameter = parameters.getRawParameterValue("masterPitch");
+    pitchModeParameter = parameters.getRawParameterValue("pitchMode");
     history.reserve(historyLimit);
     auto initial = std::make_unique<chop::Session>();
     initial->edit = chop::defaultEdit();
@@ -1088,6 +1096,9 @@ chop::PlaySettings EpsilonChopProcessor::playSettings() const noexcept
     settings.align = alignParameter->load(std::memory_order_relaxed) * 0.01f;
     settings.vintage = static_cast<chop::Vintage>(juce::jlimit(0, chop::vintageCount - 1, juce::roundToInt(vintageParameter->load(std::memory_order_relaxed))));
     settings.drive = driveParameter->load(std::memory_order_relaxed) * 0.01f;
+    settings.masterPitch = masterPitchParameter->load(std::memory_order_relaxed);
+    settings.pitchMode = static_cast<chop::PitchMode>(juce::jlimit(0, chop::pitchModeCount - 1,
+                                                                   juce::roundToInt(pitchModeParameter->load(std::memory_order_relaxed))));
     return settings;
 }
 

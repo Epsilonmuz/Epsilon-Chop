@@ -1,3 +1,4 @@
+#include <chrono>
 #include "ChopEngine.h"
 
 #include <algorithm>
@@ -618,6 +619,146 @@ void randomizerFixes()
     require(kept >= total * 8 / 10, "Chaos 10 keeps at least 80% of hand-set ratchets");
 }
 
+// ---- v0.5.0: master pitch, MPC and KEEP LENGTH -------------------------------
+void masterPitch()
+{
+    chop::Session session;
+    session.sample = makeToneSample();
+    session.edit = chop::defaultEdit();
+    session.edit.mode = chop::SliceMode::grid;
+    session.edit.density = 8;
+    session.edit.snapZero = false;
+    session.slices = chop::makeSlices(*session.sample, session.edit);
+    session.sampleRevision = 1;
+    const auto chopFrames = session.slices.edge[1] - session.slices.edge[0];
+
+    auto play = [&](double semis, chop::PitchMode mode)
+    {
+        chop::PlaySettings settings;
+        settings.masterPitch = semis;
+        settings.pitchMode = mode;
+        chop::Engine engine;
+        engine.prepare(rate);
+        std::vector<float> out(static_cast<std::size_t>(chopFrames * 3), 0.0f);
+        engine.beginBlock(session, {}, settings, 64);
+        engine.trigger(0, 1.0f, chop::VoiceOrigin::preview);
+        engine.endBlock();
+        for (std::size_t i = 0; i < out.size(); i += 64)
+        {
+            engine.beginBlock(session, {}, settings, 64);
+            for (std::size_t j = i; j < std::min(out.size(), i + 64); ++j)
+            {
+                float l = 0.0f, r = 0.0f;
+                engine.render(static_cast<int>(j - i), l, r);
+                out[j] = l;
+            }
+            engine.endBlock();
+        }
+        return out;
+    };
+    auto length = [](const std::vector<float>& a)
+    {
+        int last = 0;
+        for (int i = 0; i < static_cast<int>(a.size()); ++i) if (std::abs(a[static_cast<std::size_t>(i)]) > 1.0e-3f) last = i;
+        return last + 1;
+    };
+    auto hz = [](const std::vector<float>& a, int from, int to)   // autocorrelation pitch, 60..1000 Hz
+    {
+        double best = -1.0; int lag = 1;
+        for (int L = static_cast<int>(rate / 1000); L <= static_cast<int>(rate / 60); ++L)
+        {
+            double num = 0.0, e1 = 1e-12, e2 = 1e-12;
+            for (int i = from; i + L < to; ++i)
+            {
+                const double x = a[static_cast<std::size_t>(i)], y = a[static_cast<std::size_t>(i + L)];
+                num += x * y; e1 += x * x; e2 += y * y;
+            }
+            const auto r = num / std::sqrt(e1 * e2);
+            if (r > best + 1e-6) { best = r; lag = L; }
+            if (best > 0.9 && r < best - 0.2) break;     // first strong peak
+        }
+        return rate / lag;
+    };
+
+    const auto plain = play(0.0, chop::PitchMode::mpc);
+    require(std::abs(length(plain) - chopFrames) < chopFrames / 50, "pitch 0 plays the chop at its length");
+    require(std::abs(hz(plain, chopFrames / 4, chopFrames * 3 / 4) - 220.0) < 3.0, "pitch 0 plays the chop at its pitch");
+
+    const auto keep0 = play(0.0, chop::PitchMode::keep);
+    require(keep0 == plain, "KEEP LENGTH at 0 st is bit-identical to no pitch");
+
+    const auto mpcDown = play(-12.0, chop::PitchMode::mpc);
+    require(std::abs(length(mpcDown) - 2 * chopFrames) < chopFrames / 25, "MPC -12 st: the chop plays twice as long");
+    require(std::abs(hz(mpcDown, chopFrames / 2, chopFrames * 3 / 2) - 110.0) < 2.0, "MPC -12 st: an octave down");
+    require(firstSound(mpcDown, 0) == firstSound(plain, 0), "MPC: the chop still starts on time");
+
+    const auto keepDown = play(-12.0, chop::PitchMode::keep);
+    require(std::abs(length(keepDown) - chopFrames) < chopFrames / 25, "KEEP LENGTH -12 st: the chop keeps its length");
+    require(std::abs(hz(keepDown, chopFrames / 4, chopFrames * 3 / 4) - 110.0) < 4.0, "KEEP LENGTH -12 st: an octave down");
+    require(firstSound(keepDown, 0) == firstSound(plain, 0), "KEEP LENGTH: the chop still starts on time");
+
+    const auto keepUp = play(7.0, chop::PitchMode::keep);
+    require(std::abs(length(keepUp) - chopFrames) < chopFrames / 25, "KEEP LENGTH +7 st: the chop keeps its length");
+    require(std::abs(hz(keepUp, chopFrames / 4, chopFrames * 3 / 4) - 220.0 * std::exp2(7.0 / 12.0)) < 6.0, "KEEP LENGTH +7 st: a fifth up");
+
+    // Smooth: the grain crossfades don't pump the level of a steady tone
+    {
+        const int win = static_cast<int>(rate * 0.010);
+        double lo = 1e9, hi = 0.0;
+        for (int i = chopFrames / 5; i + win < chopFrames * 4 / 5; i += win)
+        {
+            double e = 0.0;
+            for (int j = i; j < i + win; ++j) e += keepDown[static_cast<std::size_t>(j)] * keepDown[static_cast<std::size_t>(j)];
+            lo = std::min(lo, e); hi = std::max(hi, e);
+        }
+        require(10.0 * std::log10(hi / lo) < 1.5, "KEEP LENGTH holds a steady tone steady (< 1.5 dB ripple)");
+    }
+    // Cost: KEEP mode on a busy pattern stays light
+    {
+        auto busy = makeSession(chop::SliceMode::grid, 16);
+        busy.edit.patterns[0] = chop::inOrder(16);
+        for (auto& st : busy.edit.patterns[0]) st.ratchet = 4;
+        chop::PlaySettings settings;
+        settings.preview = true;
+        settings.choke = chop::Choke::poly;
+        settings.masterPitch = -7.0;
+        settings.pitchMode = chop::PitchMode::keep;
+        const auto t0 = std::chrono::steady_clock::now();
+        (void) render(busy, settings, static_cast<int>(rate * 10.0), 512, false);
+        const auto share = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / 10.0;
+        std::cout << "  KEEP LENGTH, 4x ratchets, POLY: " << 100.0 * share << " % of a core\n";
+        require(share < 0.05, "KEEP LENGTH on a busy POLY pattern uses under 5 % of a core");
+    }
+    float peak = 0.0f;
+    for (auto v : keepDown) peak = std::max(peak, std::abs(v));
+    require(peak < 0.75f, "KEEP LENGTH grains don't overshoot the level");
+
+    // The pattern clock is untouched by pitch: steps still land on the grid in both modes.
+    auto grid = makeSession(chop::SliceMode::grid, 8);
+    grid.edit.patterns[0] = chop::inOrder(8);
+    for (auto& st : grid.edit.patterns[0]) st.gate = 40;      // silence before every step
+    auto onsets = [&](double semis, chop::PitchMode mode)
+    {
+        chop::PlaySettings settings;
+        settings.preview = true;
+        settings.masterPitch = semis;
+        settings.pitchMode = mode;
+        const auto out = render(grid, settings, static_cast<int>(rate * 1.0), 128, false);
+        const auto stepFrames = static_cast<int>(rate * 60.0 / 120.0 / 4.0);
+        std::vector<int> at;
+        for (int k = 0; k < 8; ++k) at.push_back(firstSound(out.left, k * stepFrames, 1.0e-2f));
+        return at;
+    };
+    const auto reference = onsets(0.0, chop::PitchMode::mpc);
+    for (auto mode : { chop::PitchMode::mpc, chop::PitchMode::keep })
+    {
+        const auto at = onsets(-5.0, mode);
+        bool same = true;
+        for (std::size_t k = 0; k < at.size(); ++k) same &= std::abs(at[k] - reference[k]) < static_cast<int>(rate * 0.004);
+        require(same, std::string(mode == chop::PitchMode::mpc ? "MPC" : "KEEP") + ": every step still lands on the grid at -5 st");
+    }
+}
+
 int main()
 {
     slicingModes();
@@ -630,6 +771,7 @@ int main()
     vintage();
     dovetail();
     randomizerFixes();
+    masterPitch();
     if (failures == 0)
         std::cout << "Engine tests passed\n";
     return failures == 0 ? 0 : 1;

@@ -768,7 +768,7 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
              &waveform, &ribbon, &load, &output, &mode, &density, &division, &sensitivity, &rechop, &snap, &loopBpm,
              &banks, &grooves, &inOrderButton, &clearButton, &dragChops, &dragLoop, &play, &tempo, &rate, &hostSync, &tempoFit, &swing,
              &dice, &chaos, &undoButton, &previousChop, &nextChop, &gate, &pitch, &ratchet, &reverse, &rest, &root,
-             &pin, &fitKnob, &vintageMode, &chokeMode, &drive, &alignKnob })
+             &pin, &fitKnob, &vintageMode, &chokeMode, &drive, &alignKnob, &masterPitch, &pitchModeSwitch })
         content.addAndMakeVisible(*c);
     setWantsKeyboardFocus(true);
     content.addMouseListener(this, true);
@@ -1005,6 +1005,22 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     alignAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters, "align", alignKnob.slider);
     alignKnob.slider.setDoubleClickReturnValue(true, 100.0);
 
+    // Master pitch for the whole loop (v0.5)
+    masterPitch.slider.setRange(-24.0, 24.0, 0.01);
+    masterPitch.format = [](double v)
+    {
+        const auto r = std::round(v * 10.0) / 10.0;
+        return (r > 0.0 ? "+" : "") + juce::String(r, std::abs(r - std::round(r)) < 0.05 ? 0 : 1) + " st";
+    };
+    masterPitch.slider.setTooltip("Pitch the whole loop, up to two octaves either way: the pattern, MIDI notes, the computer keyboard "
+                                  "and DRAG LOOP. It adds to each step's own pitch. Double-click to reset to 0.");
+    masterPitchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters, "masterPitch", masterPitch.slider);
+    masterPitch.slider.setDoubleClickReturnValue(true, 0.0);
+    pitchModeSwitch.setOptions({ "MPC", "KEEP" }, { 0, 1 });
+    pitchModeSwitch.setTooltip("MPC: the classic sampler way. Pitching down also slows each chop and makes it darker and heavier; "
+                               "every chop still starts on its step. KEEP (keep length): only the pitch moves, each chop keeps its length.");
+    pitchModeSwitch.onChange = [this](int value) { setParameter("pitchMode", static_cast<float>(value)); };
+
     // Footer: MIDI root
     for (int note = 24; note <= 96; ++note)
         root.addItem(noteName(note), note + 1);
@@ -1178,6 +1194,7 @@ void EpsilonChopEditor::syncControls()
     pin.setEnabled(hasSample && (isHit || anchor == selectedStep));
     vintageMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("vintage")->load()));
     chokeMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("choke")->load()));
+    pitchModeSwitch.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("pitchMode")->load()));
 
     const auto rateIndex = juce::roundToInt(processor.parameters.getRawParameterValue("rate")->load());
     rate.setSelected(rateIndex);
@@ -1263,6 +1280,8 @@ void EpsilonChopEditor::resized()
     drive.setBounds(446, 728, 80, 84);
     chokeMode.setBounds(548, 760, 210, 30);
     alignKnob.setBounds(770, 728, 84, 84);
+    masterPitch.setBounds(866, 728, 84, 84);
+    pitchModeSwitch.setBounds(958, 760, 126, 30);
 
     root.setBounds(96, designHeight - 30, 72, 22);
     layoutContext();
@@ -1323,13 +1342,7 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     drawPanel(g, soundPanel);
     caption(g, "VINTAGE", { 36, 740, 120, 14 });
     caption(g, "CHOKE", { 548, 740, 120, 14 });
-    g.setColour(text);
-    g.setFont(sans(11.0f, true));
-    g.drawText("PLAY FROM YOUR KEYBOARD", 880, 744, 210, 16, juce::Justification::centredLeft);
-    g.setColour(dim);
-    g.setFont(mono(11.0f));
-    g.drawText(juce::String::fromUTF8("1 – 0   chops 01 – 10"), 880, 764, 210, 16, juce::Justification::centredLeft);
-    g.drawText(juce::String::fromUTF8("Q – P   chops 11 – 20"), 880, 782, 210, 16, juce::Justification::centredLeft);
+    caption(g, "PITCH MODE", { 958, 740, 126, 14 });
 
     // Context captions in the chop bar
     const auto m = view.session.edit.mode;
@@ -1456,6 +1469,7 @@ void EpsilonChopEditor::timerCallback()
     rate.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("rate")->load()));
     vintageMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("vintage")->load()));
     chokeMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("choke")->load()));
+    pitchModeSwitch.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("pitchMode")->load()));
     if (const auto a = alignAmount(); std::abs(a - seenAlign) > 1.0e-4f)
     {
         // Hit markers appear and disappear with Hit Align.

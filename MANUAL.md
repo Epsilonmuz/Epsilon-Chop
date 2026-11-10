@@ -1,4 +1,4 @@
-# Epsilon Chop v0.4.0 · User Manual
+# Epsilon Chop v0.5.0 · User Manual
 
 **Epsilon Sounds · Sample chopper instrument · VST3 / AU / Standalone**
 
@@ -19,6 +19,7 @@ Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step 
 9. [Sound: Vintage, Choke and Hit Align](#9-sound-vintage-choke-and-hit-align)
 10. [Computer keyboard](#10-computer-keyboard)
 10b. [Export to FL Studio](#10b-export-to-fl-studio)
+10c. [Pitch the whole loop](#10c-pitch-the-whole-loop)
 11. [Automation parameters](#11-automation-parameters)
 12. [Under the hood](#12-under-the-hood)
 13. [Workflows](#13-workflows)
@@ -292,6 +293,24 @@ Click anywhere in the plugin window to give it the keyboard, then:
 - **Q, W … O, P** play chops **11–20**.
 
 The key letter is shown next to each chop number on the waveform. Keys follow CHOKE (in GATE mode, letting go ends the chop) and HIT ALIGN. Holding a key doesn't retrigger. If FL Studio grabs the keys instead, click the plugin window again, or turn off FL's *Typing keyboard to piano roll* while you play.
+
+---
+
+## 10c. Pitch the whole loop
+
+**PITCH** (bottom row) pitches everything Chop plays: the pattern, MIDI notes, the computer keyboard and DRAG LOOP. It goes two octaves either way (-24 to +24 semitones) and adds to each step's own PITCH. Double-click it to go back to 0. It's automatable in FL (*Pitch*), so you can sweep a loop down into a drop.
+
+**PITCH MODE** sets how it sounds:
+
+| Mode | What happens | Use it for |
+|---|---|---|
+| **MPC** | The classic sampler way: a chop pitched down also plays slower, so it gets darker and heavier, like turning down the pitch on an MPC or SP. Every chop still starts exactly on its step. | Soul and boom-bap flips, slowed-down drill/trap melodies, chopped vocals with that "pitched" sound |
+| **KEEP** (keep length) | Only the pitch moves; every chop keeps its length and timing. Done with short overlapping grains, aligned so they don't phase. | Putting a sample in the key of your beat without changing its feel |
+
+Tips:
+- Changing key: one semitone per step on the knob. To move a sample from A minor to G minor, set **-2 st**.
+- In MPC mode a pitched-down chop can ring into the next one; with CHOKE on CUT the next hit cuts it cleanly.
+- Big KEEP shifts (more than about an octave) start to sound grainy; that's the trade-off for keeping the length. MPC mode stays clean at any setting.
 
 ---
 

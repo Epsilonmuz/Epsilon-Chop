@@ -193,7 +193,8 @@ private:
     juce::TextButton reverse { "REV" }, rest { "REST" }, pin { "PIN" };
     ui::Knob fitKnob { "DOVETAIL" };
 
-    ui::Segmented vintageMode, chokeMode;
+    ui::Segmented vintageMode, chokeMode, pitchModeSwitch;
+    ui::Knob masterPitch { "PITCH" };
     ui::Knob drive { "DRIVE" }, alignKnob { "HIT ALIGN" };
 
     juce::ComboBox root;
@@ -203,7 +204,7 @@ private:
     double seenTempo = -1.0;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment, swingAttachment,
-        driveAttachment, alignAttachment;
+        driveAttachment, alignAttachment, masterPitchAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hostAttachment, fitAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
