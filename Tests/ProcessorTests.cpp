@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "MobileEditor.h"
 
 #include <algorithm>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 
 namespace
 {
@@ -485,6 +487,28 @@ void run(const char* previewFolder)
         vintageParameter->setValueNotifyingHost(vintageParameter->convertTo0to1(1.0f));
         savePreview(restored, juce::File(juce::String(previewFolder)).getChildFile("preview.png"), true);
         timeEditor(restored);
+        // iPhone layout at three screen sizes (points x 3 = Retina pixels), every page
+        restored.setPlaying(false);
+        for (auto [w, h, tag] : { std::tuple<int, int, const char*> { 375, 667, "se" }, { 393, 852, "15" }, { 430, 932, "promax" } })
+        {
+            mobile::Editor phone(restored);
+            phone.setSize(w, h);
+            for (int pg = 0; pg < 4; ++pg)
+            {
+                phone.showPage(pg);
+                phone.tick();
+                juce::Image shot(juce::Image::RGB, w * 3, h * 3, true);
+                {
+                    juce::Graphics g(shot);
+                    g.addTransform(juce::AffineTransform::scale(3.0f));
+                    phone.paintEntireComponent(g, true);
+                }
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(juce::File(juce::String(previewFolder)).getChildFile(juce::String("iphone-") + tag + "-" + juce::String(pg) + ".png"));
+                out.setPosition(0); out.truncate();
+                png.writeImageToStream(shot, out);
+            }
+        }
     }
 }
 }

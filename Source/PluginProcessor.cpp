@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "MobileEditor.h"
 #include "SampleAnalysis.h"
 
 #include <algorithm>
@@ -1070,7 +1071,11 @@ void EpsilonChopProcessor::setStateInformation(const void* data, int size)
 
 juce::AudioProcessorEditor* EpsilonChopProcessor::createEditor()
 {
+   #if JUCE_IOS
+    return new mobile::Editor(*this);     // the touch layout for iPhone
+   #else
     return new EpsilonChopEditor(*this);
+   #endif
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
@@ -1124,8 +1129,13 @@ juce::String safeName(juce::String s)
 juce::File EpsilonChopProcessor::exportFolder() const
 {
     const auto state = editorState();
+   #if JUCE_IOS
+    // iPhone: the app's Documents folder, which the Files app shows as On My iPhone > Epsilon Chop
+    auto folder = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+   #else
     auto folder = juce::File::getSpecialLocation(juce::File::userMusicDirectory)
                       .getChildFile("Epsilon Sounds").getChildFile("Epsilon Chop");
+   #endif
     if (state.session.sample != nullptr)
         folder = folder.getChildFile(safeName(juce::String::fromUTF8(state.session.sample->name.c_str())));
     return folder;

@@ -41,6 +41,7 @@ target_sources(EpsilonChop PRIVATE
     Source/Theme.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/MobileEditor.cpp
 )
 target_compile_features(EpsilonChop PRIVATE cxx_std_17)
 target_compile_definitions(EpsilonChop PUBLIC

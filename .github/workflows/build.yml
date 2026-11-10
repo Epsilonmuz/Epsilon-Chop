@@ -51,3 +51,43 @@ jobs:
         with:
           name: Epsilon-Chop-macOS
           path: dist
+
+  ios:
+    # The iPhone app: builds the Projucer iOS project for a real iPhone (unsigned) and for the
+    # simulator, then launches it in an iPhone simulator, checks it stays up, and screenshots it.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch JUCE 9.0.5
+        run: git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git JUCE
+      - name: Build for iPhone (device, unsigned)
+        run: |
+          xcodebuild -project "Builds/iOS/Epsilon Chop.xcodeproj" -target "Epsilon Chop - Standalone Plugin" \
+                     -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO -quiet build
+      - name: Build for the iPhone simulator
+        run: |
+          xcodebuild -project "Builds/iOS/Epsilon Chop.xcodeproj" -target "Epsilon Chop - Standalone Plugin" \
+                     -configuration Release -sdk iphonesimulator ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+                     CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/simbuild" -quiet build
+      - name: Run it in an iPhone simulator
+        run: |
+          set -e
+          APP=$(find simbuild -name "Epsilon Chop.app" -type d | head -1)
+          echo "App: $APP"
+          DEV=$(xcrun simctl list devices available | grep -E "iPhone 1[5-9]( Pro)? \(" | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          echo "Simulator: $DEV"
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" "$APP"
+          xcrun simctl launch "$DEV" com.epsilonsounds.chop
+          sleep 12
+          xcrun simctl spawn "$DEV" launchctl list | grep -i "epsilonsounds.chop" || { echo "::error::the app is not running after launch"; exit 1; }
+          mkdir -p shots
+          xcrun simctl io "$DEV" screenshot shots/iphone-simulator.png
+          echo "### iPhone simulator" >> "$GITHUB_STEP_SUMMARY"
+          echo "Launched and still running after 12 s." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EpsilonChop-iPhone-simulator-screenshot
+          path: shots
+          retention-days: 30

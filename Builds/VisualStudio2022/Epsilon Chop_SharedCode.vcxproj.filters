@@ -841,6 +841,9 @@
     <ClCompile Include="..\..\Source\PluginEditor.cpp">
       <Filter>Epsilon Chop\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Source\MobileEditor.cpp">
+      <Filter>Epsilon Chop\Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\JUCE\modules\juce_audio_basics\audio_play_head\juce_AudioPlayHead.cpp">
       <Filter>JUCE Modules\juce_audio_basics\audio_play_head</Filter>
     </ClCompile>
@@ -5044,6 +5047,9 @@
       <Filter>Epsilon Chop\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\PluginProcessor.h">
+      <Filter>Epsilon Chop\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Source\MobileEditor.h">
       <Filter>Epsilon Chop\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\PluginEditor.h">

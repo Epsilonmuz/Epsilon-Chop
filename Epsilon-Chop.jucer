@@ -25,6 +25,9 @@
             file="Source/PluginProcessor.h"/>
       <FILE id="26f890" name="PluginEditor.cpp" compile="1" resource="0"
             file="Source/PluginEditor.cpp"/>
+      <FILE id="mob001" name="MobileEditor.cpp" compile="1" resource="0"
+            file="Source/MobileEditor.cpp"/>
+      <FILE id="mob002" name="MobileEditor.h" compile="0" resource="0" file="Source/MobileEditor.h"/>
       <FILE id="9980d5" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
     </GROUP>
     <GROUP id="rs8kfa" name="Resources">
@@ -64,6 +67,33 @@
         <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
       </MODULEPATHS>
     </XCODE_MAC>
+    <XCODE_IPHONE targetFolder="Builds/iOS" bigIcon="EpsIcn" iosDeviceFamily="1,2"
+                  iPhoneScreenOrientation="portrait" iPadScreenOrientation="UIInterfaceOrientationPortrait"
+                  UIFileSharingEnabled="1" iosContentSharing="1" iosBackgroundAudio="0"
+                  microphonePermissionNeeded="0" customPList="&lt;plist&gt;&lt;dict&gt;&lt;key&gt;LSSupportsOpeningDocumentsInPlace&lt;/key&gt;&lt;true/&gt;&lt;key&gt;CFBundleDisplayName&lt;/key&gt;&lt;string&gt;Epsilon Chop&lt;/string&gt;&lt;/dict&gt;&lt;/plist&gt;">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"
+                       iosDeploymentTarget="15.0" linkTimeOptimisation="0"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="Epsilon Chop"
+                       iosDeploymentTarget="15.0" linkTimeOptimisation="0"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="JUCE/modules"/>
+        <MODULEPATH id="juce_dsp" path="JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
+      </MODULEPATHS>
+    </XCODE_IPHONE>
     <VS2022 targetFolder="Builds/VisualStudio2022" bigIcon="EpsIcn">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"
