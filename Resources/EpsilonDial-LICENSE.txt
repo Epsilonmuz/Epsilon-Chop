@@ -1,0 +1,7 @@
+Epsilon Dial (Regular, Bold)
+Copyright (c) 2026 Epsilon Sounds. All rights reserved, Epsilon Sounds 2026.
+
+The font software, its outlines, the build scripts that generate it, and the
+"Epsilon Dial" name are the property of Epsilon Sounds. No licence is granted to
+copy, modify, redistribute, sell or embed this font software outside products
+and materials made by or for Epsilon Sounds, except with prior written permission.

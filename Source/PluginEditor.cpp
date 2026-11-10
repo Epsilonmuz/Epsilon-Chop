@@ -766,7 +766,7 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
 
     for (auto* c : std::initializer_list<juce::Component*> {
              &waveform, &ribbon, &load, &output, &mode, &density, &division, &sensitivity, &rechop, &snap, &loopBpm,
-             &banks, &grooves, &inOrderButton, &clearButton, &play, &tempo, &rate, &hostSync, &tempoFit, &swing,
+             &banks, &grooves, &inOrderButton, &clearButton, &dragChops, &dragLoop, &play, &tempo, &rate, &hostSync, &tempoFit, &swing,
              &dice, &chaos, &undoButton, &previousChop, &nextChop, &gate, &pitch, &ratchet, &reverse, &rest, &root,
              &pin, &fitKnob, &vintageMode, &chokeMode, &drive, &alignKnob })
         content.addAndMakeVisible(*c);
@@ -840,6 +840,32 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     inOrderButton.setTooltip("Lay the chops out in their original order, so the loop plays back as recorded");
     inOrderButton.onClick = [this] { processor.arrangeInOrder(); pull(); };
     clearButton.onClick = [this] { processor.clearPattern(); pull(); };
+
+    // Export to FL Studio / any DAW
+    dragChops.setTooltip("Drag every chop into FL Studio: drop on the Channel Rack for one channel per chop, or on the "
+                         "Playlist. Drag a single chop from the waveform past the plugin's edge to drop just that one. "
+                         "Click to show the files in Finder.");
+    dragLoop.setTooltip("Drag this bank out as one seamless audio loop, exactly as you hear it (swing, choke, vintage, "
+                        "pitch, ratchets) at the project tempo. Drop it on FL's Playlist. Click to show the files in Finder.");
+    const auto reveal = [this](juce::File f)
+    {
+        if (f.existsAsFile())
+            f.revealToUser();
+        else
+            processor.exportFolder().revealToUser();
+    };
+    dragChops.files = [this] { return processor.exportAllChops(); };
+    dragChops.onClick = [this, reveal]
+    {
+        const auto files = processor.exportAllChops();
+        reveal(files.isEmpty() ? juce::File() : juce::File(files[0]));
+    };
+    dragLoop.files = [this]
+    {
+        const auto f = processor.exportPattern(1);
+        return f.existsAsFile() ? juce::StringArray { f.getFullPathName() } : juce::StringArray {};
+    };
+    dragLoop.onClick = [this, reveal] { reveal(processor.exportPattern(1)); };
 
     // Transport
     play.onClick = [this] { processor.setPlaying(!processor.isPlaying()); };
@@ -1110,6 +1136,8 @@ void EpsilonChopEditor::syncControls()
     const auto hits = chop::hitCount(pattern());
     clearButton.setEnabled(hits > 0);
     inOrderButton.setEnabled(hasSample);
+    dragChops.setEnabled(hasSample && view.session.slices.count > 0);
+    dragLoop.setEnabled(hasSample && hits > 0);
 
     for (int b = 0; b < 6; ++b)
         flags[static_cast<std::size_t>(b)].setToggleState((edit.randomFlags & (1 << b)) != 0, juce::dontSendNotification);
@@ -1156,6 +1184,20 @@ void EpsilonChopEditor::syncControls()
     root.setSelectedId(juce::roundToInt(processor.parameters.getRawParameterValue("root")->load()) + 1, juce::dontSendNotification);
 }
 
+bool EpsilonChopEditor::shouldDropFilesWhenDraggedExternally(const juce::DragAndDropTarget::SourceDetails& details,
+                                                            juce::StringArray& files, bool& canMoveFiles)
+{
+    const auto description = details.description.toString();
+    if (!description.startsWith("chop:"))
+        return false;
+    const auto file = processor.exportChop(description.fromFirstOccurrenceOf("chop:", false, false).getIntValue());
+    if (!file.existsAsFile())
+        return false;
+    files.add(file.getFullPathName());
+    canMoveFiles = false;
+    return true;
+}
+
 void EpsilonChopEditor::layoutContext()
 {
     const auto m = view.session.edit.mode;
@@ -1187,6 +1229,8 @@ void EpsilonChopEditor::resized()
     waveform.setBounds(36, 132, 1048, 230);
 
     banks.setBounds(166, 400, 132, 26);
+    dragChops.setBounds(612, 400, 96, 26);
+    dragLoop.setBounds(714, 400, 96, 26);
     grooves.setBounds(818, 400, 116, 26);
     inOrderButton.setBounds(942, 400, 72, 26);
     clearButton.setBounds(1020, 400, 64, 26);
@@ -1314,8 +1358,8 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     g.drawText("ARRANGEMENT", 36, 400, 120, 26, juce::Justification::centredLeft);
     g.setColour(faint);
     g.setFont(sans(11.0f));
-    g.drawText(juce::String::fromUTF8("Drag chops onto steps  ·  scroll a step to change it  ·  PIN a step, then roll to Dovetail"),
-               312, 400, 500, 26, juce::Justification::centredLeft);
+    g.drawFittedText(juce::String::fromUTF8("Drag chops onto steps  ·  scroll to change  ·  PIN, then roll"),
+                     312, 400, 292, 26, juce::Justification::centredLeft, 1, 0.9f);
 
     // Transport readout under the play button
     const auto synced = processor.hostSynced();

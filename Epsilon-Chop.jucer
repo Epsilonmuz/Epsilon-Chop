@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.3.0"
+<JUCERPROJECT id="KvQZba" name="Epsilon Chop" projectType="audioplug" version="0.4.0"
               companyName="Epsilon Sounds" bundleIdentifier="com.epsilonsounds.chop"
               pluginName="Epsilon Chop" pluginDesc="Sample chopper and pattern instrument"
               pluginManufacturer="Epsilon Sounds" pluginManufacturerCode="EpsS"
@@ -28,16 +28,15 @@
       <FILE id="9980d5" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
     </GROUP>
     <GROUP id="rs8kfa" name="Resources">
-      <FILE id="54364e" name="InstrumentSans-Regular.ttf" compile="0" resource="1"
-            file="Resources/InstrumentSans-Regular.ttf"/>
-      <FILE id="5fa90f" name="InstrumentSans-Bold.ttf" compile="0" resource="1"
-            file="Resources/InstrumentSans-Bold.ttf"/>
-      <FILE id="56b0c4" name="JetBrainsMono-Bold.ttf" compile="0" resource="1"
-            file="Resources/JetBrainsMono-Bold.ttf"/>
+      <FILE id="EpsIcn" name="AppIcon.png" compile="0" resource="0" file="Resources/AppIcon.png"/>
+      <FILE id="54364e" name="EpsilonDial-Regular.ttf" compile="0" resource="1"
+            file="Resources/EpsilonDial-Regular.ttf"/>
+      <FILE id="5fa90f" name="EpsilonDial-Bold.ttf" compile="0" resource="1"
+            file="Resources/EpsilonDial-Bold.ttf"/>
     </GROUP>
   </MAINGROUP>
   <EXPORTFORMATS>
-    <XCODE_MAC targetFolder="Builds/MacOSX">
+    <XCODE_MAC targetFolder="Builds/MacOSX" bigIcon="EpsIcn">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"
                        osxArchitecture="64BitIntel" macOSDeploymentTarget="12.0" linkTimeOptimisation="0"
@@ -65,7 +64,7 @@
         <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
       </MODULEPATHS>
     </XCODE_MAC>
-    <VS2022 targetFolder="Builds/VisualStudio2022">
+    <VS2022 targetFolder="Builds/VisualStudio2022" bigIcon="EpsIcn">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"
                        winArchitecture="x64" enablePluginBinaryCopyStep="0"/>
@@ -89,7 +88,7 @@
         <MODULEPATH id="juce_gui_extra" path="JUCE/modules"/>
       </MODULEPATHS>
     </VS2022>
-    <LINUX_MAKE targetFolder="Builds/LinuxMakefile">
+    <LINUX_MAKE targetFolder="Builds/LinuxMakefile" bigIcon="EpsIcn">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"/>
         <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="Epsilon Chop"/>

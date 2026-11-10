@@ -37,7 +37,7 @@ jobs:
           cp -R "build/EpsilonChop_artefacts/Release/AU/Epsilon Chop.component" dist/
           cp -R "build/EpsilonChop_artefacts/Release/Standalone/Epsilon Chop.app" dist/
           cat > dist/INSTALL.txt <<'TXT'
-          Epsilon Chop v0.3.0
+          Epsilon Chop v0.4.0
 
           1. Copy "Epsilon Chop.vst3" to ~/Library/Audio/Plug-Ins/VST3
              and "Epsilon Chop.component" to ~/Library/Audio/Plug-Ins/Components

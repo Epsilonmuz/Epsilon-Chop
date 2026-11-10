@@ -7,12 +7,13 @@ namespace
 {
 struct Faces
 {
+    // Epsilon Dial, the Epsilon Sounds house typeface. Its figures are tabular, so the
+    // readouts that used a monospace face use Dial Bold and still don't jitter.
     juce::Typeface::Ptr regular = juce::Typeface::createSystemTypefaceFor(
-        BinaryData::InstrumentSansRegular_ttf, BinaryData::InstrumentSansRegular_ttfSize);
+        BinaryData::EpsilonDialRegular_ttf, BinaryData::EpsilonDialRegular_ttfSize);
     juce::Typeface::Ptr bold = juce::Typeface::createSystemTypefaceFor(
-        BinaryData::InstrumentSansBold_ttf, BinaryData::InstrumentSansBold_ttfSize);
-    juce::Typeface::Ptr monoBold = juce::Typeface::createSystemTypefaceFor(
-        BinaryData::JetBrainsMonoBold_ttf, BinaryData::JetBrainsMonoBold_ttfSize);
+        BinaryData::EpsilonDialBold_ttf, BinaryData::EpsilonDialBold_ttfSize);
+    juce::Typeface::Ptr monoBold = bold;
 };
 
 const Faces& faces()

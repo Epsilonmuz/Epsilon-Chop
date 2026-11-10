@@ -29,7 +29,7 @@ When you roll RANDOMIZE, you see the sample re-cut before you hear it. The only 
 
 The rest of the visual system:
 
-- **Type:** Instrument Sans for labels, embedded so it looks the same on every Mac, and JetBrains Mono for numbers.
+- **Type:** Epsilon Dial, the Epsilon Sounds house typeface, embedded so it looks the same on every Mac; its tabular figures keep readouts steady.
 - **Chassis:** a few large rounded panels, with no skeuomorphic hardware.
 - **Resizing:** the whole layout scales with a fixed aspect ratio from 75% to 150%.
 

@@ -77,6 +77,17 @@ public:
     void setPlaying(bool shouldPlay) noexcept { playing.store(shouldPlay, std::memory_order_relaxed); }
     bool isPlaying() const noexcept { return playing.load(std::memory_order_relaxed); }
 
+    // Export for FL Studio and other DAWs (message thread). Files are kept in
+    // Music/Epsilon Sounds/Epsilon Chop/<sample>/, not a temp folder, because FL links
+    // to dragged-in audio by its path: a temp file would vanish from the project later.
+    // An unchanged export reuses its file; a changed one gets a new name, so audio
+    // already used in a project is never overwritten.
+    juce::File exportFolder() const;
+    juce::File exportChop(int slice);                 // the raw chop, as cut
+    juce::StringArray exportAllChops();               // every chop, numbered
+    juce::File exportPattern(int passes = 1);         // this bank as you hear it, a seamless loop at the tempo
+    double exportTempo() const;
+
     // Live readouts for the editor
     int playStep() const noexcept { return currentStep.load(std::memory_order_relaxed); }
     int playFrame() const noexcept { return currentFrame.load(std::memory_order_relaxed); }
@@ -97,6 +108,8 @@ private:
     void reclaimLocked();
     void pushKey(int code) noexcept;
     bool canUndoLocked(int bank) const;
+    chop::PlaySettings playSettings() const noexcept;
+    juce::File writeWav(const juce::AudioBuffer<float>&, double rate, const juce::String& name);
 
     struct HistoryEntry
     {
@@ -118,7 +131,7 @@ private:
     std::atomic<std::uint64_t> loadSerial { 0 };
     std::atomic<int> previewRequest { -1 }, currentStep { -1 }, currentFrame { -1 }, currentSlice { -1 };
     std::atomic<bool> playing { false }, synced { false }, hostTempo { false };
-    std::atomic<double> currentTempo { 120.0 };
+    std::atomic<double> currentTempo { 120.0 }, hostRate { 0.0 };
     std::atomic<float>* outputParameter = nullptr;
     std::atomic<float>* patternParameter = nullptr;
     std::atomic<float>* rateParameter = nullptr;

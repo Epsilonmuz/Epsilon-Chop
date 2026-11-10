@@ -235,6 +235,90 @@ void timeEditor(EpsilonChopProcessor& processor)
     std::cout << "Full editor repaint: " << perFrame << " ms per frame\n";
 }
 
+juce::AudioBuffer<float> readWav(const juce::File& f, double& sampleRate)
+{
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatReader> reader(wav.createReaderFor(new juce::FileInputStream(f), true));
+    require(reader != nullptr, "exported file is a readable WAV");
+    require(reader->bitsPerSample == 24, "exports are 24-bit");
+    sampleRate = reader->sampleRate;
+    juce::AudioBuffer<float> audio(static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples));
+    reader->read(&audio, 0, audio.getNumSamples(), 0, true, true);
+    return audio;
+}
+
+// Drag-out to FL Studio: chops, all chops, and the pattern as a seamless loop.
+void testExport(EpsilonChopProcessor& processor)
+{
+    processor.setMode(chop::SliceMode::grid);
+    processor.setDensity(8);
+    processor.setBank(0);
+    processor.arrangeInOrder();
+    auto state = processor.editorState();
+    const auto folder = processor.exportFolder();
+    folder.deleteRecursively();
+    require(folder.getFileName() == "Jersey Chop Demo", "exports go in a folder named after the sample");
+    require(!folder.isAChildOf(juce::File::getSpecialLocation(juce::File::tempDirectory)),
+            "exports are kept out of temp, so FL projects keep finding them");
+
+    // One chop: raw audio, exact length, original rate and channels
+    const auto chop3 = processor.exportChop(2);
+    require(chop3.getFileName() == "Jersey Chop Demo - Chop 03.wav", "chop file is named after sample and number");
+    double fileRate = 0.0;
+    auto audio = readWav(chop3, fileRate);
+    const auto& slices = state.session.slices;
+    require(fileRate == rate && audio.getNumChannels() == 2, "chop keeps the sample's rate and channels");
+    require(audio.getNumSamples() == slices.edge[3] - slices.edge[2], "chop is exactly the cut");
+    require(std::abs(audio.getSample(0, 0)) < 1.0e-3f && std::abs(audio.getSample(0, audio.getNumSamples() - 1)) < 1.0e-3f,
+            "chop starts and ends at silence (no clicks)");
+    {
+        const auto& pcm = state.session.sample->pcm[0];
+        const auto middle = audio.getNumSamples() / 2;
+        require(std::abs(audio.getSample(0, middle) - pcm[static_cast<std::size_t>(slices.edge[2] + middle)]) < 1.0e-4f,
+                "chop audio is the untouched sample");
+    }
+    require(processor.exportChop(2) == chop3, "an unchanged export reuses its file");
+    require(processor.exportChop(99) == juce::File(), "an invalid chop exports nothing");
+
+    // Every chop
+    const auto all = processor.exportAllChops();
+    require(all.size() == slices.count, "every chop is exported");
+    require(all[0].endsWith("Chop 01.wav") && all[all.size() - 1].endsWith("Chop " + juce::String(slices.count).paddedLeft('0', 2) + ".wav"),
+            "chops are numbered in order");
+
+    // Pattern loop at 140 BPM, 1/16: one bar
+    processor.prepareToPlay(rate, 512);
+    auto* tempo = processor.parameters.getParameter("tempo");
+    tempo->setValueNotifyingHost(tempo->convertTo0to1(140.0f));
+    const auto loop = processor.exportPattern(1);
+    const auto bpm = processor.exportTempo();   // the host's tempo once it has played, else the TEMPO box
+    require(processor.hostHasTempo() || std::abs(bpm - 140.0) < 0.01, "without a host the TEMPO box sets the loop tempo");
+    require(loop.getFileName() == "Jersey Chop Demo - Pattern A " + juce::String(bpm, bpm == std::floor(bpm) ? 0 : 1) + " BPM.wav",
+            "loop file names bank and tempo");
+    audio = readWav(loop, fileRate);
+    const auto barFrames = juce::roundToInt(4.0 * 60.0 / bpm * rate);
+    require(std::abs(audio.getNumSamples() - barFrames) <= 1, "loop is exactly one bar at the tempo");
+    require(audio.getMagnitude(0, audio.getNumSamples()) > 0.05f, "loop has audio");
+    // Seamless: the join from the last frame to the first is no bigger than normal frame-to-frame steps
+    float largest = 0.0f;
+    for (int i = 1; i < audio.getNumSamples(); ++i)
+        largest = std::max(largest, std::abs(audio.getSample(0, i) - audio.getSample(0, i - 1)));
+    const auto join = std::abs(audio.getSample(0, 0) - audio.getSample(0, audio.getNumSamples() - 1));
+    require(join <= largest + 1.0e-4f, "loop point is seamless");
+    // The first step plays chop 1 at the downbeat
+    require(audio.getMagnitude(0, 0, rate / 100) > 0.05f, "loop starts on the downbeat hit");
+
+    // A changed pattern never overwrites the earlier file
+    processor.randomize();
+    const auto second = processor.exportPattern(1);
+    require(second != loop && loop.existsAsFile() && second.getFileName().contains("(2)"),
+            "a changed loop gets a new name, the old file stays");
+    require(processor.exportPattern(4).existsAsFile(), "multi-bar export works");
+
+    folder.deleteRecursively();
+    std::cout << "Export: chop, all chops, seamless pattern loop, file reuse and no overwrites passed.\n";
+}
+
 void run(const char* previewFolder)
 {
     TempFolder fixture;
@@ -371,6 +455,7 @@ void run(const char* previewFolder)
     }
 
     std::cout << "Import, chop modes, randomize/undo, MIDI wrap, preview without host, host sync, recall, Dovetail and keys passed.\n";
+    testExport(restored);
     if (previewFolder != nullptr)
     {
         restored.setMode(chop::SliceMode::grid);

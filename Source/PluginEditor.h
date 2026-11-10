@@ -79,6 +79,36 @@ private:
     double wheelAccumulator = 0.0;
 };
 
+// A button you drag out of the plugin into FL Studio (playlist, channel rack or
+// browser) or any DAW. `files` makes the audio when the drag starts; a plain click
+// runs `onClick` instead (shows the files in Finder).
+class DragOutButton final : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+    std::function<juce::StringArray()> files;
+
+    void mouseDown(const juce::MouseEvent& e) override { dragging = false; juce::TextButton::mouseDown(e); }
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (dragging || !isEnabled() || e.getDistanceFromDragStart() < 6 || files == nullptr)
+            return;
+        dragging = true;
+        setState(juce::Button::buttonNormal);
+        const auto list = files();
+        if (!list.isEmpty())
+            juce::DragAndDropContainer::performExternalDragDropOfFiles(list, false, this);
+    }
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        if (dragging) { dragging = false; setState(juce::Button::buttonNormal); return; }
+        juce::TextButton::mouseUp(e);
+    }
+
+private:
+    bool dragging = false;
+};
+
 class EpsilonChopEditor final : public juce::AudioProcessorEditor,
                                public juce::DragAndDropContainer,
                                public juce::FileDragAndDropTarget,
@@ -110,6 +140,9 @@ public:
     bool keyStateChanged(bool isKeyDown) override;
     void mouseDown(const juce::MouseEvent&) override;
     float alignAmount() const;
+    // Dragging a chop past the plugin's edge drops it into FL as a WAV.
+    bool shouldDropFilesWhenDraggedExternally(const juce::DragAndDropTarget::SourceDetails&,
+                                              juce::StringArray& files, bool& canMoveFiles) override;
 
     static constexpr int designWidth = 1120, designHeight = 852;
 
@@ -141,6 +174,7 @@ private:
     ui::Segmented banks;
     juce::ComboBox grooves;
     juce::TextButton inOrderButton { "IN ORDER" }, clearButton { "CLEAR" };
+    DragOutButton dragChops { "DRAG CHOPS" }, dragLoop { "DRAG LOOP" };
 
     ui::PlayButton play;
     ui::ValueBox tempo;

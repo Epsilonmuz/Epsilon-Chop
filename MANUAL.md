@@ -1,4 +1,4 @@
-# Epsilon Chop v0.3.0 · User Manual
+# Epsilon Chop v0.4.0 · User Manual
 
 **Epsilon Sounds · Sample chopper instrument · VST3 / AU / Standalone**
 
@@ -18,6 +18,7 @@ Epsilon Chop cuts a sample into up to 32 **chops** and places them on a 16-step 
 8. [MIDI and the Piano Roll](#8-midi-and-the-piano-roll)
 9. [Sound: Vintage, Choke and Hit Align](#9-sound-vintage-choke-and-hit-align)
 10. [Computer keyboard](#10-computer-keyboard)
+10b. [Export to FL Studio](#10b-export-to-fl-studio)
 11. [Automation parameters](#11-automation-parameters)
 12. [Under the hood](#12-under-the-hood)
 13. [Workflows](#13-workflows)
@@ -291,6 +292,32 @@ Click anywhere in the plugin window to give it the keyboard, then:
 - **Q, W … O, P** play chops **11–20**.
 
 The key letter is shown next to each chop number on the waveform. Keys follow CHOKE (in GATE mode, letting go ends the chop) and HIT ALIGN. Holding a key doesn't retrigger. If FL Studio grabs the keys instead, click the plugin window again, or turn off FL's *Typing keyboard to piano roll* while you play.
+
+---
+
+## 10b. Export to FL Studio
+
+Three ways to get audio out of Chop and into FL Studio (or any DAW). All of them are plain drags.
+
+| Drag | You get | Drop it on |
+|---|---|---|
+| **A chop** from the waveform, past the edge of the plugin window | That one chop as a WAV | Playlist (an audio clip), Channel Rack (a sampler channel), or a Slicex/FPC pad |
+| **DRAG CHOPS** (arrangement bar) | Every chop, numbered *Chop 01, Chop 02 …* | Channel Rack: FL makes one channel per chop, ready for the step sequencer |
+| **DRAG LOOP** (arrangement bar) | This bank (A–D) as one audio loop, exactly as you hear it | Playlist: it lines up with the bar and loops seamlessly |
+
+**What's in each file**
+
+- Chops are the raw audio between the cuts, at the sample's own rate, 24-bit, with tiny click guards (0.3 ms in, 2 ms out). Vintage and Drive are not printed, so you can process them in FL.
+- The loop is printed with everything: swing, choke, ratchets, pitch, reverse, Hit Align, Vintage, Drive and Output. It's rendered at the project tempo (the host's tempo once FL has played, otherwise the TEMPO box) and is exactly one pattern long (one bar at 1/16). The loop is rendered twice and the second pass kept, so tails that ring over the loop point are already in the file and the clip loops without a gap or click.
+
+**Where the files go**
+
+`Music/Epsilon Sounds/Epsilon Chop/<sample name>/`. FL links to dragged-in audio by its location, so the files are kept there, never in a temp folder that macOS clears. Dragging the same thing again reuses the same file; if the audio changed, the new file gets a new name (*… (2).wav*), so audio already used in a project is never overwritten. Click DRAG CHOPS or DRAG LOOP without dragging to open the folder in Finder, which is handy for FL's Browser.
+
+**Tips**
+
+- Flip a sample into a beat: RANDOMIZE until it bounces, DRAG LOOP to the Playlist, then try more rolls on bank B and drag those too. Every take gets its own file.
+- Want chops to sit on FL's grid? Use GRID or BEAT mode, then DRAG CHOPS onto the Channel Rack and program them in the step sequencer.
 
 ---
 

@@ -8,17 +8,14 @@
 
 namespace BinaryData
 {
-    extern const char*   InstrumentSansRegular_ttf;
-    const int            InstrumentSansRegular_ttfSize = 68028;
+    extern const char*   EpsilonDialRegular_ttf;
+    const int            EpsilonDialRegular_ttfSize = 13076;
 
-    extern const char*   InstrumentSansBold_ttf;
-    const int            InstrumentSansBold_ttfSize = 68084;
-
-    extern const char*   JetBrainsMonoBold_ttf;
-    const int            JetBrainsMonoBold_ttfSize = 114828;
+    extern const char*   EpsilonDialBold_ttf;
+    const int            EpsilonDialBold_ttfSize = 13020;
 
     // Number of elements in the namedResourceList and originalFileNames arrays.
-    const int namedResourceListSize = 3;
+    const int namedResourceListSize = 2;
 
     // Points to the start of a list of resource names.
     extern const char* namedResourceList[];

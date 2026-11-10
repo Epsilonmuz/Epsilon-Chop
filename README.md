@@ -1,14 +1,24 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.3.0 · sample chopper instrument (VST3 · AU · Standalone)**
+**Epsilon Sounds · v0.4.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
 **Pin the chop you love. Epsilon Chop builds the rest around it.**
 
 Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 16-step ribbon and flips them with one roll of the dice. Pin one chop and **Dovetail** picks every other chop so it flows out of the one before it: same key, smooth level, matching tone, all the way round the bar. **Hit Align** lands every hit exactly on the grid whatever chop goes where, **CUT** choke works like FL Studio's "Cut by 1" on every pad, and **VINTAGE** adds the punch and grit of classic 12-bit samplers. Finger-drum chops straight from your computer keyboard.
 
-![Epsilon Chop v0.3.0](preview.png)
+![Epsilon Chop v0.4.0](preview.png)
 
 [Download the v0.3.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.3.0-Projucer.zip)
+
+## New in v0.4.0: export to FL Studio
+
+| Drag | You get |
+| --- | --- |
+| **A chop** from the waveform, past the plugin's edge | That chop as a WAV: drop it on FL's Playlist, Channel Rack, or a Slicex/FPC pad |
+| **DRAG CHOPS** | Every chop, numbered: drop on the Channel Rack for one channel per chop |
+| **DRAG LOOP** | This bank as one seamless audio loop, exactly as you hear it, at the project tempo: drop it on the Playlist |
+
+Files are kept in *Music/Epsilon Sounds/Epsilon Chop/&lt;sample&gt;/* (not a temp folder) so FL projects keep finding them, and an export never overwrites audio a project already uses. Also new: the Epsilon Dial house typeface, the Hallmark product mark and the Chop app icon. Details in [the manual](MANUAL.md#10b-export-to-fl-studio).
 
 ## New in v0.3.0
 
@@ -64,4 +74,4 @@ Full details of every control and what happens under the hood: **[MANUAL.md](MAN
 
 The macOS build and FL Studio scan are still to be checked on the Mac. `.github/workflows/build.yml` builds a universal VST3, AU and Standalone on macOS 15, runs the tests and pluginval, and uploads them with `INSTALL.txt`.
 
-**[Text manual (v0.3)](MANUAL.md)** · [Illustrated manual (PDF, v0.2)](Manual/Epsilon-Chop-Manual.pdf) · [HTML version](Manual/Epsilon-Chop-Manual.html) · [Design and research](DESIGN.md) · Fonts: Instrument Sans and JetBrains Mono, SIL OFL 1.1 (`Resources/licenses`) · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)
+**[Text manual (v0.3)](MANUAL.md)** · [Illustrated manual (PDF, v0.2)](Manual/Epsilon-Chop-Manual.pdf) · [HTML version](Manual/Epsilon-Chop-Manual.html) · [Design and research](DESIGN.md) · Font: Epsilon Dial, the Epsilon Sounds house typeface · [JUCE licence](https://github.com/juce-framework/JUCE/blob/master/LICENSE.md)

@@ -373,6 +373,7 @@ bool EpsilonChopProcessor::isBusesLayoutSupported(const BusesLayout& layout) con
 
 void EpsilonChopProcessor::prepareToPlay(double sampleRate, int)
 {
+    hostRate.store(sampleRate);
     engine.prepare(sampleRate, juce::Decibels::decibelsToGain(outputParameter->load()));
 }
 
@@ -432,20 +433,8 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             transport.playing = position->getIsPlaying();
         }
 
-    constexpr std::array<int, 3> stepsPerQuarter { 2, 4, 8 };
-    chop::PlaySettings settings;
-    settings.followHost = patternParameter->load(std::memory_order_relaxed) >= 0.5f;
+    auto settings = playSettings();
     settings.preview = playing.load(std::memory_order_relaxed);
-    settings.stepsPerQuarter = stepsPerQuarter[static_cast<std::size_t>(
-        juce::jlimit(0, 2, juce::roundToInt(rateParameter->load(std::memory_order_relaxed))))];
-    settings.swing = swingParameter->load(std::memory_order_relaxed) * 0.01f;
-    settings.tempoFit = fitParameter->load(std::memory_order_relaxed) >= 0.5f;
-    settings.fallbackBpm = tempoParameter->load(std::memory_order_relaxed);
-    settings.gain = juce::Decibels::decibelsToGain(outputParameter->load(std::memory_order_relaxed));
-    settings.choke = static_cast<chop::Choke>(juce::jlimit(0, chop::chokeCount - 1, juce::roundToInt(chokeParameter->load(std::memory_order_relaxed))));
-    settings.align = alignParameter->load(std::memory_order_relaxed) * 0.01f;
-    settings.vintage = static_cast<chop::Vintage>(juce::jlimit(0, chop::vintageCount - 1, juce::roundToInt(vintageParameter->load(std::memory_order_relaxed))));
-    settings.drive = driveParameter->load(std::memory_order_relaxed) * 0.01f;
     engine.beginBlock(*current, transport, settings, frames);
     const auto aligned = settings.align > 0.0f;
 
@@ -1079,4 +1068,176 @@ juce::AudioProcessorEditor* EpsilonChopProcessor::createEditor()
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new EpsilonChopProcessor();
+}
+
+// ============================================================================
+// Export
+
+chop::PlaySettings EpsilonChopProcessor::playSettings() const noexcept
+{
+    constexpr std::array<int, 3> stepsPerQuarter { 2, 4, 8 };
+    chop::PlaySettings settings;
+    settings.followHost = patternParameter->load(std::memory_order_relaxed) >= 0.5f;
+    settings.stepsPerQuarter = stepsPerQuarter[static_cast<std::size_t>(
+        juce::jlimit(0, 2, juce::roundToInt(rateParameter->load(std::memory_order_relaxed))))];
+    settings.swing = swingParameter->load(std::memory_order_relaxed) * 0.01f;
+    settings.tempoFit = fitParameter->load(std::memory_order_relaxed) >= 0.5f;
+    settings.fallbackBpm = tempoParameter->load(std::memory_order_relaxed);
+    settings.gain = juce::Decibels::decibelsToGain(outputParameter->load(std::memory_order_relaxed));
+    settings.choke = static_cast<chop::Choke>(juce::jlimit(0, chop::chokeCount - 1, juce::roundToInt(chokeParameter->load(std::memory_order_relaxed))));
+    settings.align = alignParameter->load(std::memory_order_relaxed) * 0.01f;
+    settings.vintage = static_cast<chop::Vintage>(juce::jlimit(0, chop::vintageCount - 1, juce::roundToInt(vintageParameter->load(std::memory_order_relaxed))));
+    settings.drive = driveParameter->load(std::memory_order_relaxed) * 0.01f;
+    return settings;
+}
+
+double EpsilonChopProcessor::exportTempo() const
+{
+    // The host's tempo once it has told us one, otherwise the TEMPO box.
+    const auto t = hostHasTempo() ? tempo() : static_cast<double>(tempoParameter->load());
+    return juce::jlimit(20.0, 400.0, std::isfinite(t) ? t : 120.0);
+}
+
+namespace
+{
+juce::String safeName(juce::String s)
+{
+    for (auto* ext : { ".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a" })
+        if (s.endsWithIgnoreCase(ext))
+            s = s.dropLastCharacters(static_cast<int>(std::strlen(ext)));
+    s = juce::File::createLegalFileName(s).trim();
+    return s.isEmpty() ? juce::String("Untitled") : s.substring(0, 60);
+}
+}
+
+juce::File EpsilonChopProcessor::exportFolder() const
+{
+    const auto state = editorState();
+    auto folder = juce::File::getSpecialLocation(juce::File::userMusicDirectory)
+                      .getChildFile("Epsilon Sounds").getChildFile("Epsilon Chop");
+    if (state.session.sample != nullptr)
+        folder = folder.getChildFile(safeName(juce::String::fromUTF8(state.session.sample->name.c_str())));
+    return folder;
+}
+
+juce::File EpsilonChopProcessor::writeWav(const juce::AudioBuffer<float>& audio, double rate, const juce::String& name)
+{
+    juce::MemoryBlock bytes;
+    {
+        juce::WavAudioFormat wav;
+        auto stream = std::make_unique<juce::MemoryOutputStream>(bytes, false);
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(rate)
+                                 .withNumChannels(audio.getNumChannels())
+                                 .withBitsPerSample(24);
+        std::unique_ptr<juce::OutputStream> out(stream.release());
+        auto writer = wav.createWriterFor(out, options);
+        if (writer == nullptr || !writer->writeFromAudioSampleBuffer(audio, 0, audio.getNumSamples()))
+            return {};
+    }
+    const auto folder = exportFolder();
+    if (!folder.createDirectory())
+        return {};
+    auto file = folder.getChildFile(name + ".wav");
+    // Same name and same audio: reuse it. Same name, different audio: never overwrite a
+    // file a project may already use; take the next free name instead.
+    for (int n = 2; file.existsAsFile(); ++n)
+    {
+        juce::MemoryBlock existing;
+        if (file.getSize() == static_cast<juce::int64>(bytes.getSize()) && file.loadFileAsData(existing) && existing == bytes)
+            return file;
+        file = folder.getChildFile(name + " (" + juce::String(n) + ").wav");
+    }
+    return file.replaceWithData(bytes.getData(), bytes.getSize()) ? file : juce::File();
+}
+
+juce::File EpsilonChopProcessor::exportChop(int slice)
+{
+    const auto state = editorState();
+    const auto& sample = state.session.sample;
+    const auto& slices = state.session.slices;
+    if (sample == nullptr || slice < 0 || slice >= slices.count)
+        return {};
+    const auto start = slices.edge[static_cast<std::size_t>(slice)];
+    const auto frames = slices.edge[static_cast<std::size_t>(slice + 1)] - start;
+    if (frames <= 0)
+        return {};
+    const auto channels = juce::jlimit(1, 2, sample->channels);
+    juce::AudioBuffer<float> audio(channels, frames);
+    for (int c = 0; c < channels; ++c)
+        audio.copyFrom(c, 0, sample->pcm[static_cast<std::size_t>(c)].data() + start, frames);
+    // Click guards: 0.3 ms in (keeps the attack), 2 ms out.
+    const auto in = std::min(frames / 4, std::max(1, juce::roundToInt(sample->sampleRate * 0.0003)));
+    const auto out = std::min(frames / 4, std::max(1, juce::roundToInt(sample->sampleRate * 0.002)));
+    for (int c = 0; c < channels; ++c)
+    {
+        auto* d = audio.getWritePointer(c);
+        for (int i = 0; i < in; ++i)
+            d[i] *= static_cast<float>(i) / static_cast<float>(in);                      // first frame exactly 0
+        for (int i = 0; i < out; ++i)
+            d[frames - 1 - i] *= static_cast<float>(i) / static_cast<float>(out);        // last frame exactly 0
+    }
+    const auto name = safeName(juce::String::fromUTF8(sample->name.c_str())) + " - Chop " + juce::String(slice + 1).paddedLeft('0', 2);
+    return writeWav(audio, sample->sampleRate, name);
+}
+
+juce::StringArray EpsilonChopProcessor::exportAllChops()
+{
+    juce::StringArray files;
+    const auto count = editorState().session.slices.count;
+    for (int i = 0; i < count; ++i)
+        if (const auto f = exportChop(i); f.existsAsFile())
+            files.add(f.getFullPathName());
+    return files;
+}
+
+juce::File EpsilonChopProcessor::exportPattern(int passes)
+{
+    const auto state = editorState();
+    if (state.session.sample == nullptr || chop::hitCount(state.session.edit.patterns[static_cast<std::size_t>(state.session.edit.bank)]) == 0)
+        return {};
+    passes = juce::jlimit(1, 16, passes);
+    const auto rate = hostRate.load() >= 8000.0 ? hostRate.load() : state.session.sample->sampleRate;
+    const auto bpm = exportTempo();
+    auto settings = playSettings();
+    settings.followHost = true;
+    settings.preview = false;
+    const auto loopQuarters = static_cast<double>(chop::stepCount) / settings.stepsPerQuarter;
+    const auto framesAt = [&](double quarters) { return static_cast<juce::int64>(std::llround(quarters * 60.0 / bpm * rate)); };
+    // One pass first so tails ringing over the loop point are already there:
+    // the clip then loops seamlessly in the playlist.
+    const auto keepFrom = framesAt(loopQuarters);
+    const auto total = framesAt(loopQuarters * (passes + 1));
+    const auto keep = static_cast<int>(total - keepFrom);
+
+    chop::Engine offline;
+    offline.prepare(rate, settings.gain);
+    juce::AudioBuffer<float> audio(2, keep);
+    audio.clear();
+    constexpr int block = 512;
+    for (juce::int64 at = 0; at < total; at += block)
+    {
+        const auto n = static_cast<int>(std::min<juce::int64>(block, total - at));
+        chop::Transport transport;
+        transport.bpm = bpm;
+        transport.ppq = static_cast<double>(at) / rate * bpm / 60.0;
+        transport.playing = transport.hasPosition = true;
+        offline.beginBlock(state.session, transport, settings, n);
+        for (int i = 0; i < n; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            offline.render(i, l, r);
+            const auto index = at + i - keepFrom;
+            if (index >= 0)
+            {
+                audio.setSample(0, static_cast<int>(index), l);
+                audio.setSample(1, static_cast<int>(index), r);
+            }
+        }
+        offline.endBlock();
+    }
+    const auto bank = juce::String::charToString(static_cast<juce::juce_wchar>('A' + state.session.edit.bank));
+    const auto name = safeName(juce::String::fromUTF8(state.session.sample->name.c_str())) + " - Pattern " + bank + " "
+                    + juce::String(bpm, bpm == std::floor(bpm) ? 0 : 1) + " BPM";
+    return writeWav(audio, rate, name);
 }

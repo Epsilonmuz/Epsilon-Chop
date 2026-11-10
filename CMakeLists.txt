@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(EpsilonChop VERSION 0.3.0 LANGUAGES C CXX)
+project(EpsilonChop VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 
@@ -11,7 +11,7 @@ if(APPLE)
 endif()
 
 juce_add_plugin(EpsilonChop
-    VERSION 0.3.0
+    VERSION 0.4.0
     COMPANY_NAME "Epsilon Sounds"
     BUNDLE_ID com.epsilonsounds.chop
     IS_SYNTH TRUE
@@ -26,13 +26,13 @@ juce_add_plugin(EpsilonChop
     VST3_CATEGORIES Instrument Sampler
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     PRODUCT_NAME "Epsilon Chop"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
 )
 juce_generate_juce_header(EpsilonChop)
 
 juce_add_binary_data(EpsilonChopData SOURCES
-    Resources/InstrumentSans-Regular.ttf
-    Resources/InstrumentSans-Bold.ttf
-    Resources/JetBrainsMono-Bold.ttf
+    Resources/EpsilonDial-Regular.ttf
+    Resources/EpsilonDial-Bold.ttf
 )
 
 target_sources(EpsilonChop PRIVATE

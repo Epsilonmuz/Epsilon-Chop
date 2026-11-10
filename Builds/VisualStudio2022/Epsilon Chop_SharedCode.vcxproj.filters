@@ -9872,13 +9872,13 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\Resources\InstrumentSans-Regular.ttf">
+    <None Include="..\..\Resources\AppIcon.png">
       <Filter>Epsilon Chop\Resources</Filter>
     </None>
-    <None Include="..\..\Resources\InstrumentSans-Bold.ttf">
+    <None Include="..\..\Resources\EpsilonDial-Regular.ttf">
       <Filter>Epsilon Chop\Resources</Filter>
     </None>
-    <None Include="..\..\Resources\JetBrainsMono-Bold.ttf">
+    <None Include="..\..\Resources\EpsilonDial-Bold.ttf">
       <Filter>Epsilon Chop\Resources</Filter>
     </None>
     <None Include="..\..\JUCE\modules\juce_audio_devices\native\asio\LICENSE.txt">
@@ -10006,6 +10006,9 @@
     </None>
     <None Include="..\..\JUCE\modules\juce_gui_extra\native\typescript\webview-interop\README.md">
       <Filter>JUCE Modules\juce_gui_extra\native\typescript\webview-interop</Filter>
+    </None>
+    <None Include=".\icon.ico">
+      <Filter>JUCE Library Code</Filter>
     </None>
   </ItemGroup>
 </Project>
