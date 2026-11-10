@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Theme.h"
+#include "../Shared/epsilon_ui/EpsilonSignature.h"
 #include <functional>
 
 namespace ui
@@ -25,30 +26,22 @@ public:
 
     void paint(juce::Graphics& g) override
     {
+        // Epsilon Sounds signature segmented switch: the selected cap carries the lume bar
+        const auto pal = epsilon_ui::palette(epsilon_ui::Tier::Epsilon);
         const auto bounds = getLocalBounds().toFloat().reduced(0.5f);
-        const auto radius = std::min(bounds.getHeight() * 0.5f, 8.0f);
-        g.setColour(theme::ink2);
-        g.fillRoundedRectangle(bounds, radius);
-        g.setColour(theme::line);
-        g.drawRoundedRectangle(bounds, radius, 1.0f);
         const auto count = options.size();
+        std::vector<juce::Rectangle<float>> segs;
+        int sel = -1;
+        for (int i = 0; i < count; ++i) { segs.push_back(segment(i)); if (values[i] == selected) sel = i; }
+        epsilon_ui::controls::drawSegmentTrack(g, bounds, segs, sel, pal);
         for (int i = 0; i < count; ++i)
         {
-            auto cell = segment(i);
-            const auto on = values[i] == selected;
-            if (on)
-            {
-                g.setColour(isEnabled() ? theme::text : theme::faint);
-                g.fillRoundedRectangle(cell.reduced(2.0f), radius - 2.0f);
-            }
-            else if (i == hover)
-            {
-                g.setColour(theme::ink3);
-                g.fillRoundedRectangle(cell.reduced(2.0f), radius - 2.0f);
-            }
-            g.setColour(on ? theme::ink0 : (i == hover ? theme::text : theme::dim));
+            epsilon_ui::controls::State st; st.on = i == sel; st.hover = i == hover;
+            auto ink = epsilon_ui::controls::drawSegment(g, segs[(size_t) i], pal, st);
+            if (!isEnabled()) ink = ink.withAlpha(0.45f);
+            g.setColour(ink);
             g.setFont(theme::sans(fontHeight, true));
-            g.drawFittedText(options[i], cell.toNearestInt(), juce::Justification::centred, 1);
+            g.drawFittedText(options[i], segs[(size_t) i].withTrimmedBottom(st.on ? 3.0f : 0.0f).toNearestInt(), juce::Justification::centred, 1);
         }
     }
     void mouseMove(const juce::MouseEvent& e) override { setHover(indexAt(e.position)); }

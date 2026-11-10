@@ -36,7 +36,7 @@ namespace size
     constexpr int space1 = 4, space2 = 8, space3 = 12, space4 = 16, space6 = 24, space8 = 32;
     constexpr float radiusSm = 3.0f, radiusMd = 6.0f, radiusLg = 12.0f;
     constexpr int knobHero = 96, knobMain = 60, knobSmall = 40;
-    constexpr int header = 48, footer = 24;
+    constexpr int header = 52, footer = 24;
     constexpr float arc = 3.0f;
 }
 

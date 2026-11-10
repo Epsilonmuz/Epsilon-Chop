@@ -1,5 +1,6 @@
 #include "Theme.h"
 #include "BinaryData.h"
+#include "../Shared/epsilon_ui/EpsilonSignature.h"
 
 namespace theme
 {
@@ -82,73 +83,28 @@ juce::Typeface::Ptr Look::getTypefaceForFont(const juce::Font& font)
 
 void Look::drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&, bool over, bool down)
 {
-    auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
-    const auto radius = std::min(bounds.getHeight() * 0.5f, 8.0f);
-    const auto on = button.getToggleState();
-    const auto enabled = button.isEnabled();
-
-    auto fill = on ? text : (over && enabled ? ink4 : ink3);
-    if (down && enabled)
-        fill = fill.darker(0.15f);
-    if (!enabled)
-        fill = ink2;
-    g.setColour(fill);
-    g.fillRoundedRectangle(bounds, radius);
-    if (!on)
-    {
-        g.setColour(enabled ? lineStrong : line);
-        g.drawRoundedRectangle(bounds, radius, 1.0f);
-    }
+    // Epsilon Sounds signature keycap; a toggle that is on carries the champagne lume bar
+    epsilon_ui::signature::keycap(g, button, over, down, epsilon_ui::Tier::Epsilon);
 }
 
 void Look::drawButtonText(juce::Graphics& g, juce::TextButton& button, bool over, bool)
 {
     const auto on = button.getToggleState();
     // Action buttons read brighter than switched-off toggles.
-    auto colour = on ? ink0 : (over ? text : (button.getClickingTogglesState() ? dim : text.withAlpha(0.88f)));
+    auto colour = on ? epsilon_ui::palette(epsilon_ui::Tier::Epsilon).live : (over ? text : (button.getClickingTogglesState() ? dim : text.withAlpha(0.88f)));
     if (!button.isEnabled())
         colour = faint;
     g.setColour(colour);
     g.setFont(getTextButtonFont(button, button.getHeight()));
-    g.drawFittedText(button.getButtonText(), button.getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
+    g.drawFittedText(button.getButtonText(), button.getLocalBounds().reduced(6, 0).withTrimmedBottom(button.getClickingTogglesState() ? 3 : 0),
+                     juce::Justification::centred, 1);
 }
 
-void Look::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider& slider)
+void Look::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float, float, juce::Slider& slider)
 {
-    const auto size = static_cast<float>(std::min(w, h));
-    const auto centre = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
-                                               static_cast<float>(w), static_cast<float>(h)).getCentre();
-    const auto radius = size * 0.5f - 3.0f;
-    const auto angle = start + pos * (end - start);
-    const auto enabled = slider.isEnabled();
-
-    // Track ring
-    juce::Path track;
-    track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
-    g.setColour(line);
-    g.strokePath(track, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    // Value arc grows from the centre for bipolar knobs
-    const auto bipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
-    const auto from = bipolar ? (start + end) * 0.5f : start;
-    juce::Path value;
-    value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, std::min(from, angle), std::max(from, angle), true);
-    g.setColour(enabled ? text : faint);
-    g.strokePath(value, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    // Cap
-    const auto cap = radius - 6.0f;
-    juce::ColourGradient shade(ink4, centre.x, centre.y - cap, ink2, centre.x, centre.y + cap, false);
-    g.setGradientFill(shade);
-    g.fillEllipse(centre.x - cap, centre.y - cap, cap * 2.0f, cap * 2.0f);
-    g.setColour(lineStrong.withAlpha(0.8f));
-    g.drawEllipse(centre.x - cap, centre.y - cap, cap * 2.0f, cap * 2.0f, 1.0f);
-
-    // Pointer
-    const auto tip = centre.getPointOnCircumference(cap - 3.0f, angle);
-    const auto base = centre.getPointOnCircumference(cap * 0.35f, angle);
-    g.setColour(enabled ? text : faint);
-    g.drawLine({ base, tip }, 2.0f);
+    // Epsilon Sounds signature coin-edge knob (static layers cached)
+    epsilon_ui::signature::knob(g, juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(2.0f), pos, slider,
+                                epsilon_ui::Tier::Epsilon);
 }
 
 void Look::drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float, float,
