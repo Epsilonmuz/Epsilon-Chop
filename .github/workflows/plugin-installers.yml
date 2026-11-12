@@ -1,0 +1,213 @@
+name: Build plug-in installers
+
+on:
+  push:
+    branches: [codex/plugin-installers]
+    paths: [.github/workflows/plugin-installers.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.projects.outputs.matrix }}
+    steps:
+      - id: projects
+        shell: bash
+        run: |
+          # Build the same source and package versions as the published previews.
+          cat <<'PROJECTS' > projects.jsonl
+          {"repo": "Epsilon-Chop", "version": "0.5.0", "sha": "45e77dc7ed13be67b9ff010c074429f449b2f208", "targets": ["EpsilonChop_VST3"], "packages": [{"name": "Epsilon Chop", "zip": "Epsilon-Chop-v0.5.0-macOS.zip", "sha256": "72892d9a71feb8ff588c963e8091395f6e1098bd21e22a3d17ebcbfb6ecf1e74", "minimum_macOS": "15.5", "plugins": ["Epsilon Chop"]}]}
+          {"repo": "Epsilon-Carve", "version": "0.5.3", "sha": "a934adaf2c8c8f3cfbfe1bd1570ef18ff03f40a2", "targets": ["EpsilonCarve_VST3"], "packages": [{"name": "Epsilon Carve", "zip": "Epsilon-Carve-v0.5.3-macOS.zip", "sha256": "70473ce1670a49acd76d5bd20d42d8de5340eb72e296c0430d7c2bcd42b3e15b", "minimum_macOS": "12.0", "plugins": ["Epsilon Carve"]}]}
+          {"repo": "EpsilonFET", "version": "0.2.0", "sha": "41cb85b0e5085931edb6b08c9909b63d18e00ccc", "targets": ["EpsilonFET_VST3"], "packages": [{"name": "Epsilon FET", "zip": "Epsilon-FET-v0.2.0-macOS.zip", "sha256": "663e64a845a9bec3eb719eaa342c0017e8c6ed822c57a257ac4a9281d5f502df", "minimum_macOS": "12.0", "plugins": ["Epsilon FET"]}]}
+          {"repo": "Epsilon-Bounce", "version": "1.3.0", "sha": "d0d4b555396907cd9bba73e6dbaa424a6ebd2671", "targets": ["EpsilonBounce_VST3"], "packages": [{"name": "Epsilon Bounce", "zip": "Epsilon-Bounce-v1.3.0-macOS.zip", "sha256": "18c082e5f8cbf41a1c5599c32fcc1de2645f2fc327d3c649201d04634e97ec75", "minimum_macOS": "12.0", "plugins": ["Epsilon Bounce"]}]}
+          {"repo": "Epsilon-sub", "version": "1.1.0", "sha": "d7deb1d6011f89bc63c059486de9907786838e03", "targets": ["Epsilon808_VST3"], "packages": [{"name": "Epsilon 808", "zip": "Epsilon-808-v1.1.0-macOS.zip", "sha256": "fb7cfd2a5a45c361c13e570c779f7d8a44afd9db961f6c6ea5b91cc2378e7e82", "minimum_macOS": "12.0", "plugins": ["Epsilon 808"]}]}
+          {"repo": "Muzi-Console", "version": "0.1.0", "sha": "455cdc31eb9f9be5ae74f6ccc0aea0bf0ccb9bc6", "targets": ["MuziConsole_VST3"], "packages": [{"name": "Muzi Console", "zip": "Muzi-Console-v0.1.0-macOS.zip", "sha256": "a22d474f8a7647b225c1220616cc1b10f4bca0fba6193eb313370a042aa4fe9f", "minimum_macOS": "12.0", "plugins": ["Muzi Console"]}]}
+          {"repo": "MuziFx", "version": "0.1.0", "sha": "85ed28d84f6a4bde87bf2276e9b74826bbdfcb40", "targets": ["MuziEQ_VST3", "MuziGlue_VST3"], "packages": [{"name": "Muzi EQ", "zip": "Muzi-EQ-v0.1.0-macOS.zip", "sha256": "546ff72b2bf3676ced1c84d7f1b9222d0a46f76a1134dbc0048eaf953dbd364d", "minimum_macOS": "12.0", "plugins": ["Muzi EQ"]}, {"name": "Muzi Glue", "zip": "Muzi-Glue-v0.1.0-macOS.zip", "sha256": "e52c0795202b4bc01c429b64601342079cc141bb6db57c52a27a21b3faf3319c", "minimum_macOS": "12.0", "plugins": ["Muzi Glue"]}]}
+          {"repo": "MuziTame", "version": "0.8.1", "sha": "7ec00dce5a6f4b8bec0a9858f3b871d27d91d992", "targets": ["MuziTame_VST3"], "packages": [{"name": "Muzi Tame", "zip": "Muzi-Tame-v0.8.1-macOS.zip", "sha256": "04d809e2999240de3defb2b0bf5fcf16e5ade98bc91051d488db24570f1f1e1c", "minimum_macOS": "12.0", "plugins": ["Muzi Tame"]}]}
+          {"repo": "EpsilonExpantion-", "version": "0.4.0", "sha": "d925e78f8366d6fb4ac27b024fe720b66f44eb57", "targets": ["EpsilonCrush_VST3", "EpsilonHeat_VST3", "EpsilonPlate_VST3", "EpsilonPrism_VST3", "EpsilonSpace_VST3", "EpsilonTime_VST3", "EpsilonTone_VST3", "EpsilonValve_VST3", "EpsilonVoice_VST3"], "packages": [{"name": "Epsilon Expansion", "zip": "Epsilon-Expansion-v0.4.0-macOS.zip", "sha256": "4ba8eb7af3860101a2643ef48ae3a9bcd23cf0eaf68db5d560edd06c74a2be74", "minimum_macOS": "12.0", "plugins": ["Epsilon Crush", "Epsilon Heat", "Epsilon Plate", "Epsilon Prism", "Epsilon Space", "Epsilon Time", "Epsilon Tone", "Epsilon Valve", "Epsilon Voice"]}]}
+          PROJECTS
+          echo "matrix=$(jq -sc '{include: .}' projects.jsonl)" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS / ${{ matrix.repo }}
+    needs: plan
+    runs-on: macos-15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.projects) }}
+    env:
+      REPO: ${{ matrix.repo }}
+      VERSION: ${{ matrix.version }}
+      PACKAGES: ${{ toJSON(matrix.packages) }}
+    steps:
+      - name: Build and test universal VST3 installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          destination=/Library/Audio/Plug-Ins/VST3
+          while IFS= read -r package; do
+            archive=$(jq -r .zip <<< "$package")
+            checksum=$(jq -r .sha256 <<< "$package")
+            slug=${archive%-v"$VERSION"-macOS.zip}
+            identifier="com.epsilonsounds.installer.$(tr '[:upper:]' '[:lower:]' <<< "$slug")"
+            work=$(mktemp -d)
+            mkdir -p "$work/extract" "$work/payload"
+            curl --fail --silent --show-error --location --retry 3 \
+              --output "$work/$archive" \
+              "https://github.com/Epsilonmuz/$REPO/releases/download/v$VERSION-macos-preview.1/$archive"
+            printf '%s  %s\n' "$checksum" "$work/$archive" | shasum -a 256 -c -
+            ditto -x -k "$work/$archive" "$work/extract"
+            while IFS= read -r plugin; do
+              source=("$work/extract"/*/VST3/"$plugin.vst3")
+              test "${#source[@]}" -eq 1
+              test -d "${source[0]}"
+              ditto "${source[0]}" "$work/payload/$plugin.vst3"
+            done < <(jq -r '.plugins[]' <<< "$package")
+
+            # Prevent Installer from relocating a same-named bundle elsewhere.
+            pkgbuild --analyze --root "$work/payload" "$work/components.plist"
+            python3 -c '
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as source:
+              components = plistlib.load(source)
+          for component in components:
+              component["BundleIsRelocatable"] = False
+          with open(sys.argv[1], "wb") as output:
+              plistlib.dump(components, output)
+          ' "$work/components.plist"
+            output="dist/$slug-v$VERSION-macOS-Installer.pkg"
+            pkgbuild --root "$work/payload" --component-plist "$work/components.plist" \
+              --identifier "$identifier" --version "$VERSION" \
+              --install-location "$destination" "$output"
+            sudo installer -pkg "$output" -target /
+            while IFS= read -r plugin; do
+              bundle="$destination/$plugin.vst3"
+              executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$bundle/Contents/Info.plist")
+              installed="$bundle/Contents/MacOS/$executable"
+              lipo "$installed" -verify_arch x86_64 arm64
+              cmp "$work/payload/$plugin.vst3/Contents/MacOS/$executable" "$installed"
+              echo "Verified installation at $bundle"
+            done < <(jq -r '.plugins[]' <<< "$package")
+          done < <(jq -c '.[]' <<< "$PACKAGES")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.repo }}-macOS-installers
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 / ${{ matrix.repo }}
+    needs: plan
+    runs-on: windows-2025
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.projects) }}
+    env:
+      REPO: ${{ matrix.repo }}
+      VERSION: ${{ matrix.version }}
+      PACKAGES: ${{ toJSON(matrix.packages) }}
+      TARGETS: ${{ join(matrix.targets, ' ') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Epsilonmuz/${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: plugin
+          persist-credentials: false
+      - name: Configure and compile Windows VST3s
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $options = @()
+          switch ($env:REPO) {
+            'EpsilonExpantion-' {
+              $juce = Join-Path $env:RUNNER_TEMP 'JUCE'
+              git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git $juce
+              $options += "-DJUCE_PATH=$juce"
+            }
+            { $_ -in 'EpsilonFET', 'MuziFx', 'MuziTame' } { }
+            default {
+              if (-not (Test-Path 'plugin/JUCE/CMakeLists.txt')) {
+                git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git plugin/JUCE
+              }
+            }
+          }
+          cmake -S plugin -B build -G 'Visual Studio 17 2022' -A x64 '-DCMAKE_CXX_FLAGS=/D_USE_MATH_DEFINES' @options
+          $targets = $env:TARGETS -split ' '
+          cmake --build build --config Release --parallel 2 --target @targets
+      - name: Build and test Windows installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          )
+          $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler is missing' }
+          $outputDirectory = (New-Item -ItemType Directory -Path dist).FullName
+          $destination = Join-Path $env:CommonProgramW6432 'VST3'
+          $packages = ConvertFrom-Json $env:PACKAGES
+          foreach ($package in $packages) {
+            $suffix = "-v$env:VERSION-macOS.zip"
+            $slug = $package.zip.Substring(0, $package.zip.Length - $suffix.Length)
+            $id = $slug.ToLowerInvariant()
+            $work = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP $slug)).FullName
+            $payload = (New-Item -ItemType Directory -Path (Join-Path $work 'payload')).FullName
+            foreach ($plugin in $package.plugins) {
+              $bundles = @(Get-ChildItem -LiteralPath build -Recurse -Directory -Filter "$plugin.vst3" |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "Contents/x86_64-win/$plugin.vst3") -PathType Leaf })
+              if ($bundles.Count -ne 1) { throw "Expected one x64 bundle for $plugin, found $($bundles.Count)" }
+              Copy-Item -LiteralPath $bundles[0].FullName -Destination $payload -Recurse
+            }
+            $base = "$slug-v$env:VERSION-Windows-x64-Setup"
+            $script = Join-Path $work 'Setup.iss'
+            @"
+          [Setup]
+          AppId=com.epsilonsounds.installer.$id
+          AppName=$($package.name)
+          AppVersion=$env:VERSION
+          AppPublisher=Epsilon Sounds
+          CreateAppDir=no
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=admin
+          ArchitecturesAllowed=x64os
+          ArchitecturesInstallIn64BitMode=x64os
+          UninstallFilesDir={commonappdata}\Epsilon Sounds\Installers\$id
+          OutputDir=$outputDirectory
+          OutputBaseFilename=$base
+          Compression=lzma2
+          SolidCompression=yes
+          [Files]
+          Source: "$payload\*"; DestDir: "{commoncf64}\VST3"; Flags: ignoreversion recursesubdirs createallsubdirs
+          "@ | Set-Content -LiteralPath $script -Encoding utf8BOM
+            & $iscc $script
+            $exe = Join-Path $outputDirectory "$base.exe"
+            $log = Join-Path $work 'install.log'
+            $install = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"" -Wait -PassThru
+            if ($install.ExitCode -ne 0) {
+              if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 50 }
+              throw "Installer exited with $($install.ExitCode)"
+            }
+            foreach ($plugin in $package.plugins) {
+              $relative = "$plugin.vst3/Contents/x86_64-win/$plugin.vst3"
+              $staged = Get-FileHash -LiteralPath (Join-Path $payload $relative)
+              $installed = Get-FileHash -LiteralPath (Join-Path $destination $relative)
+              if ($installed.Hash -ne $staged.Hash) { throw "Installed binary mismatch for $plugin" }
+              Write-Host "Verified installation at $destination\$plugin.vst3"
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.repo }}-Windows-x64-installers
+          path: dist/*.exe
+          if-no-files-found: error
