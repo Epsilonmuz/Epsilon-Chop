@@ -141,6 +141,10 @@ jobs:
             }
           }
           $env:CXXFLAGS = '/D_USE_MATH_DEFINES'
+          if ($env:REPO -eq 'MuziTame') {
+            # Enable MSVC's conforming compiler for nested preset-dialog lambdas.
+            $env:CXXFLAGS += ' /Zc:lambda'
+          }
           cmake -S plugin -B build -G 'Visual Studio 17 2022' -A x64 @options
           $targets = $env:TARGETS -split ' '
           cmake --build build --config Release --parallel 2 --target @targets
