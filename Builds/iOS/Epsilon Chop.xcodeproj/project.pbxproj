@@ -46,6 +46,7 @@
 		5B0E652BE598D9DBEDC2DDAD /* include_juce_gui_basics_5.cpp */ = {isa = PBXBuildFile; fileRef = E129026494D41F191874E0BB; };
 		5D386993325EE2435C4B937E /* UIKit.framework */ = {isa = PBXBuildFile; fileRef = 995973F34012232C33A4C966; };
 		61BF692FB14D984F5A82A936 /* PluginProcessor.cpp */ = {isa = PBXBuildFile; fileRef = 1B7A58F7F129C081AD534A5E; };
+		D8BC9922F98249B99A69E275 /* MobileAudioSession.mm */ = {isa = PBXBuildFile; fileRef = 0C24AB0D84254627AF39043A; };
 		6CC923C0B06C8E2A7032957D /* MobileEditor.cpp */ = {isa = PBXBuildFile; fileRef = C905D276F64527A7D331E07C; };
 		6EBC6E35D46BC5144077A928 /* AppIcon.icns */ = {isa = PBXBuildFile; fileRef = FC7B7939980A7F0183AB474E; };
 		6F3B97C35115620C9BAD5482 /* CoreAudio.framework */ = {isa = PBXBuildFile; fileRef = 055EA7030BDCFA2D7A33BEC7; };
@@ -177,6 +178,7 @@
 		C4700A6351B97C3499EE3D5A /* include_juce_audio_devices.mm */ /* include_juce_audio_devices.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_audio_devices.mm; path = ../../JuceLibraryCode/include_juce_audio_devices.mm; sourceTree = SOURCE_ROOT; };
 		C633F1F050AF3B649A5A3F31 /* Foundation.framework */ /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		C8BD88C51CA2F411086BCC68 /* Accelerate.framework */ /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
+		0C24AB0D84254627AF39043A /* MobileAudioSession.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = MobileAudioSession.mm; path = ../../Source/MobileAudioSession.mm; sourceTree = SOURCE_ROOT; };
 		C905D276F64527A7D331E07C /* MobileEditor.cpp */ /* MobileEditor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = MobileEditor.cpp; path = ../../Source/MobileEditor.cpp; sourceTree = SOURCE_ROOT; };
 		CA0FA4C0DB7042512D7F1570 /* Metal.framework */ /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		CDC94A041E6E0F663D86C896 /* include_juce_graphics.mm */ /* include_juce_graphics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = include_juce_graphics.mm; path = ../../JuceLibraryCode/include_juce_graphics.mm; sourceTree = SOURCE_ROOT; };
@@ -314,6 +316,7 @@
 				1B7A58F7F129C081AD534A5E,
 				6405079B32FC0D2CADEDB89B,
 				1E2FC170D5C74045227E32D0,
+				0C24AB0D84254627AF39043A,
 				C905D276F64527A7D331E07C,
 				654D0AFE6F1841B3E0AC4640,
 				130D56BB5EAFE6A86498667A,
@@ -571,6 +574,7 @@
 				E0649E3D978C8E2781B3A09F,
 				61BF692FB14D984F5A82A936,
 				3A28011B9F6EF55A8EA09FB9,
+				D8BC9922F98249B99A69E275,
 				6CC923C0B06C8E2A7032957D,
 				7D94B6A95FDB54F418739760,
 				84C3A8DD8BD92783312005B5,
