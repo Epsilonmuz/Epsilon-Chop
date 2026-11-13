@@ -1,14 +1,29 @@
 #include "MobileEditor.h"
 
 #include <cmath>
+#include <utility>
+
+#if JUCE_IOS
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#endif
 
 namespace mobile
 {
 using namespace theme;
 
+#if JUCE_IOS
+void requestMicrophonePermission(std::function<void(bool)>);
+std::function<void()> observeAppDeactivation(std::function<void()>);
+#endif
+
 namespace
 {
 juce::String two(int n) { return juce::String(n).paddedLeft('0', 2); }
+
+juce::File projectFolder()
+{
+    return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Chop Projects");
+}
 
 void label(juce::Graphics& g, const juce::String& s, juce::Rectangle<float> r,
            juce::Justification j = juce::Justification::centredLeft)
@@ -31,12 +46,123 @@ juce::BorderSize<int> safeInsets()
         const auto t = d->totalArea, u = d->userArea;
         if (u != t && ! u.isEmpty())
             return { u.getY() - t.getY(), u.getX() - t.getX(), t.getBottom() - u.getBottom(), t.getRight() - u.getRight() };
-        return { 59, 0, 34, 0 };   // a modern iPhone, until iOS tells us
+        return t.getHeight() >= 812 ? juce::BorderSize<int> { 59, 0, 34, 0 }
+                                    : juce::BorderSize<int> { 20, 0, 0, 0 };
     }
    #endif
     return {};
 }
 }
+
+class Editor::MicCapture final : private juce::AudioIODeviceCallback
+{
+public:
+    static constexpr int maxSeconds = 60;
+
+    ~MicCapture() override { disconnect(); }
+
+    juce::String start(juce::AudioDeviceManager& deviceManager)
+    {
+        const auto* type = deviceManager.getCurrentDeviceTypeObject();
+        if (type == nullptr)
+            return "No audio device is available";
+        const auto inputs = type->getDeviceNames(true);
+        const auto index = type->getDefaultDeviceIndex(true);
+        if (!juce::isPositiveAndBelow(index, inputs.size()))
+            return "No microphone is available";
+
+        manager = &deviceManager;
+        previousSetup = manager->getAudioDeviceSetup();
+        previousSetup.useDefaultInputChannels = false;
+        auto setup = previousSetup;
+        setup.inputDeviceName = inputs[index];
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        setup.inputChannels.setBit(0);
+        if (manager->setAudioDeviceSetup(setup, false).isNotEmpty())
+            return "Couldn't open the microphone";
+
+        auto* device = manager->getCurrentAudioDevice();
+        if (device == nullptr || !device->isPlaying() || device->getActiveInputChannels().isZero()
+            || device->getInputChannelNames().isEmpty())
+            return "No input on the current audio route";
+
+        sampleRate = device->getCurrentSampleRate();
+        if (!chop::validSampleSize(sampleRate, 1, 1))
+            return "Unsupported microphone sample rate";
+        const auto capacity = std::min(chop::maxSampleFrames, static_cast<int>(sampleRate * maxSeconds));
+        audio.setSize(1, capacity);
+        started = juce::Time::getMillisecondCounterHiRes();
+        manager->addAudioCallback(this);
+        attached = true;
+        return {};
+    }
+
+    void disconnect()
+    {
+        if (manager == nullptr)
+            return;
+        if (attached)
+            manager->removeAudioCallback(this);
+        if (manager->setAudioDeviceSetup(previousSetup, false).isNotEmpty())
+            manager->initialiseWithDefaultDevices(0, 2);
+        manager = nullptr;
+        attached = false;
+    }
+
+    juce::AudioBuffer<float> audio;
+    double sampleRate = 0.0, started = 0.0;
+    std::atomic<int> frames { 0 };
+    std::atomic<float> peak { 0.0f };
+    std::atomic<bool> reachedLimit { false }, interrupted { false };
+
+private:
+    void audioDeviceIOCallbackWithContext(const float* const* input, int inputs, float* const* output,
+                                          int outputs, int count, const juce::AudioIODeviceCallbackContext&) override
+    {
+        // The standalone player mixes this callback with its own output. Leave the
+        // microphone out of that mix and copy input only into preallocated storage.
+        for (int channel = 0; channel < outputs; ++channel)
+            if (auto* destination = output[channel])
+                juce::FloatVectorOperations::clear(destination, count);
+
+        if (count <= 0 || interrupted.load(std::memory_order_relaxed) || reachedLimit.load(std::memory_order_relaxed))
+            return;
+        if (inputs == 0 || input[0] == nullptr)
+        {
+            interrupted.store(true, std::memory_order_relaxed);
+            return;
+        }
+
+        const auto offset = frames.load(std::memory_order_relaxed);
+        const auto length = std::min(count, audio.getNumSamples() - offset);
+        audio.copyFrom(0, offset, input[0], length);
+        peak.store(audio.getMagnitude(0, offset, length), std::memory_order_relaxed);
+        frames.store(offset + length, std::memory_order_relaxed);
+        if (offset + length == audio.getNumSamples())
+            reachedLimit.store(true, std::memory_order_relaxed);
+    }
+
+    void audioDeviceAboutToStart(juce::AudioIODevice* device) override
+    {
+        if (std::abs(device->getCurrentSampleRate() - sampleRate) > 0.5)
+            interrupted.store(true, std::memory_order_relaxed);
+    }
+
+    void audioDeviceStopped() override { interrupted.store(true, std::memory_order_relaxed); }
+
+    void audioDeviceError(const juce::String& error) override
+    {
+        if (error.contains("Interruption") || error.contains("MediaServices")
+            || error == "Old device unavailable" || error == "New device available"
+            || error == "No suitable route for category")
+            interrupted.store(true, std::memory_order_relaxed);
+    }
+
+    juce::AudioDeviceManager* manager = nullptr;
+    juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
+    bool attached = false;
+};
 
 //==============================================================================
 // Wave
@@ -56,10 +182,10 @@ void Wave::render(float px)
     {
         g.setColour(dim);
         g.setFont(sans(15.0f, true));
-        g.drawText("Tap LOAD to pick a sample", r, juce::Justification::centred);
-        g.setFont(sans(12.0f));
+        g.drawText("Record a sound or load a sample", r.withTrimmedBottom(18.0f), juce::Justification::centred);
+        g.setFont(sans(11.5f));
         g.setColour(faint);
-        g.drawText("Files, voice memos, AirDrop: WAV, AIFF, MP3, M4A", r.withTrimmedTop(44.0f), juce::Justification::centred);
+        g.drawText("MIC records from your phone", r.withTrimmedTop(30.0f), juce::Justification::centred);
         return;
     }
     const auto& sample = *s.sample;
@@ -102,6 +228,8 @@ void Wave::setPlaying(int slice, int frame)
 
 void Wave::paint(juce::Graphics& g)
 {
+    if (editor.paintCapture(g, getLocalBounds().toFloat()))
+        return;
     const auto px = std::max(1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
     if (!cache.isValid() || std::abs(px - cacheScale) > 0.01f)
         render(px);
@@ -124,6 +252,23 @@ void Wave::paint(juce::Graphics& g)
         g.setColour(live);
         g.fillRect(r.getWidth() * (float) shownFrame / (float) frames - 0.75f, r.getY(), 1.5f, r.getHeight());
     }
+    if (draggedBoundary >= 0)
+    {
+        g.setColour(text);
+        g.fillRect(r.getWidth() * static_cast<float>(dragFrame) / static_cast<float>(frames) - 1.0f,
+                   r.getY(), 2.0f, r.getHeight());
+    }
+    if (editor.sequenceArmed)
+    {
+        auto strip = r.removeFromTop(25.0f).reduced(5.0f, 3.0f);
+        g.setColour(ink0.withAlpha(0.92f));
+        g.fillRoundedRectangle(strip, 4.0f);
+        g.setColour(live);
+        g.setFont(sans(11.0f, true));
+        g.drawText("REC SEQ   BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + editor.recordedBank))
+                   + "   STEP " + two(std::max(0, editor.processor.playStep()) + 1) + "   TAP PADS",
+                   strip.reduced(7.0f, 0.0f), juce::Justification::centredLeft);
+    }
 }
 
 int Wave::sliceAt(float x) const
@@ -140,10 +285,50 @@ int Wave::sliceAt(float x) const
 
 void Wave::mouseDown(const juce::MouseEvent& e)
 {
-    if (editor.view.session.sample == nullptr)
+    if (editor.capture != nullptr || editor.view.loading || editor.view.session.sample == nullptr)
         return;
+    if (editor.page == 4)
+    {
+        const auto& session = editor.view.session;
+        auto nearest = 14.0f;
+        for (int i = 1; i < session.slices.count; ++i)
+        {
+            const auto frame = session.slices.edge[static_cast<std::size_t>(i)];
+            const auto x = static_cast<float>(getWidth()) * static_cast<float>(frame) / static_cast<float>(session.sample->length());
+            if (const auto distance = std::abs(e.position.x - x); distance < nearest)
+            {
+                draggedBoundary = i;
+                dragFrame = frame;
+                nearest = distance;
+            }
+        }
+        if (draggedBoundary >= 0)
+            return;
+    }
     if (const auto c = sliceAt(e.position.x); c >= 0)
         editor.auditionChop(c);
+}
+
+void Wave::mouseDrag(const juce::MouseEvent& e)
+{
+    if (draggedBoundary < 0 || editor.view.session.sample == nullptr)
+        return;
+    const auto progress = juce::jlimit(0.0f, 1.0f, e.position.x / static_cast<float>(getWidth()));
+    dragFrame = juce::roundToInt(progress * static_cast<float>(editor.view.session.sample->length()));
+    repaint();
+}
+
+void Wave::mouseUp(const juce::MouseEvent& e)
+{
+    if (draggedBoundary < 0)
+        return;
+    const auto index = std::exchange(draggedBoundary, -1);
+    if (e.mouseWasDraggedSinceMouseDown() && editor.page == 4)
+    {
+        editor.processor.editBoundary(index, std::max(0, dragFrame));
+        editor.pull();
+    }
+    repaint();
 }
 
 //==============================================================================
@@ -153,6 +338,7 @@ void Pad::paint(juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced(3.0f);
     const auto colour = exists ? chopColour(chop) : faint;
+    const auto held = heldChop >= 0;
     g.setColour(juce::Colours::black.withAlpha(0.45f));
     g.fillRoundedRectangle(r.translated(0.0f, 1.5f), 10.0f);
     g.setGradientFill(juce::ColourGradient(held || lit ? ink4 : ink3, 0.0f, r.getY(), ink2, 0.0f, r.getBottom(), false));
@@ -174,20 +360,24 @@ void Pad::paint(juce::Graphics& g)
 
 void Pad::mouseDown(const juce::MouseEvent&)
 {
-    if (!exists)
+    if (!exists || heldChop >= 0)
         return;
-    held = true;
-    editor.processor.keyDown(chop);
-    editor.selectedChop = chop;
+    heldChop = chop;
+    editor.playPad(chop);
     repaint();
 }
 
 void Pad::mouseUp(const juce::MouseEvent&)
 {
-    if (!held)
+    release();
+}
+
+void Pad::release()
+{
+    if (heldChop < 0)
         return;
-    held = false;
-    editor.processor.keyUp(chop);
+    editor.processor.keyUp(heldChop);
+    heldChop = -1;
     repaint();
 }
 
@@ -273,26 +463,38 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
     setOpaque(true);
    #if JUCE_IOS
     juce::Desktop::getInstance().setOrientationsEnabled(juce::Desktop::upright);   // phone held upright
+    stopObservingApp = observeAppDeactivation([this]
+    {
+        finishMic(true);
+        finishSequenceRecord();
+        for (auto& pad : pads)
+            pad->release();
+        processor.stopAll();
+    });
    #endif
     addAndMakeVisible(content);
     content.painter = [this](juce::Graphics& g) { paintContent(g); };
 
-    for (auto* c : std::initializer_list<juce::Component*> { &wave, &load, &mode, &density, &division, &tabs, &play, &tempo, &dice })
+    for (auto* c : std::initializer_list<juce::Component*> { &wave, &load, &mic, &mode, &density, &division, &tabs, &play, &sequenceRecord, &tempo, &dice })
         content.addChildComponent(c);
-    for (auto* c : std::initializer_list<juce::Component*> { &wave, &load, &mode, &tabs, &play, &tempo, &dice })
+    for (auto* c : std::initializer_list<juce::Component*> { &wave, &load, &mic, &mode, &tabs, &play, &sequenceRecord, &tempo, &dice })
         c->setVisible(true);
     for (int i = 0; i < 16; ++i)
     {
-        pads.push_back(std::make_unique<Pad>(*this, i));
+        pads.push_back(std::make_unique<Pad>(*this));
         content.addChildComponent(*pads.back());
     }
     for (auto* c : std::initializer_list<juce::Component*> {
              &padBanks, &banks, &rate, &steps, &prevChop, &nextChop, &rest, &pin, &reverse, &inOrder, &clear, &undo,
              &chaos, &dovetail, &swing, &pitch, &output, &drive, &align, &pitchMode, &vintage, &choke,
-             &shareLoop, &shareChops, &shareChop, &loopBars })
+             &shareLoop, &shareChops, &shareChop, &loopBars, &saveSet, &openSet, &projectList })
         content.addChildComponent(c);
 
     load.onClick = [this] { chooseSample(); };
+    mic.setTitle("Record a microphone sample");
+    mic.onClick = [this] { toggleMic(); };
+    sequenceRecord.setTitle("Record pads to the sequence");
+    sequenceRecord.onClick = [this] { toggleSequenceRecord(); };
 
     mode.setOptions({ "TRANSIENT", "BEAT", "GRID", "RANDOM" },
                     { (int) chop::SliceMode::transient, (int) chop::SliceMode::beat, (int) chop::SliceMode::grid,
@@ -313,15 +515,21 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
     division.fontHeight = 10.5f;
     division.onChange = [this](int v) { processor.setBeatDivision(v); pull(); };
 
-    play.onClick = [this] { processor.setPlaying(!processor.isPlaying()); };
-    tempo.caption = "TEMPO";
-    tempo.unit = "BPM";
+    play.setTitle("Play or stop the pattern");
+    play.onClick = [this]
+    {
+        finishSequenceRecord();
+        processor.setPlaying(!processor.isPlaying());
+    };
+    tempo.caption = "BPM";
     tempo.minimum = 40.0;
     tempo.maximum = 240.0;
     tempo.perPixel = 0.25;
     tempo.valueHeight = 17.0f;
     tempo.onChange = [this](double v) { setParameter("tempo", (float) v); };
     tempo.onReset = [this] { setParameter("tempo", 120.0f); };
+    dice.title = "FLIP";
+    dice.setTitle("Flip the pattern");
     dice.onClick = [this]
     {
         processor.randomize();
@@ -330,7 +538,7 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
         pull();
     };
 
-    tabs.setOptions({ "PADS", "PATTERN", "SOUND", "EXPORT" }, { 0, 1, 2, 3 });
+    tabs.setOptions({ "PADS", "CHOP", "PATTERN", "SOUND", "PROJECT" }, { 0, 4, 1, 2, 3 });
     tabs.fontHeight = 11.5f;
     tabs.onChange = [this](int v) { showPage(v); };
 
@@ -405,6 +613,11 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
         const auto f = processor.exportChop(selectedChop);
         share(f.existsAsFile() ? juce::StringArray { f.getFullPathName() } : juce::StringArray {});
     };
+    saveSet.onClick = [this] { saveProject(); };
+    openSet.onClick = [this] { openProject(); };
+    projectList.setTitle("Saved projects");
+    projectList.setTextWhenNothingSelected("Choose a saved project");
+    projectList.onChange = [this] { syncControls(); };
 
     setResizable(true, false);
     setResizeLimits(320, 560, 2000, 3000);
@@ -417,6 +630,14 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
 Editor::~Editor()
 {
     stopTimer();
+    if (namePrompt != nullptr)
+        namePrompt->exitModalState(0);
+    if (stopObservingApp)
+        stopObservingApp();
+    if (capture != nullptr)
+        finishMic(true);
+    for (auto& pad : pads)
+        pad->release();
     setLookAndFeel(nullptr);
 }
 
@@ -432,8 +653,17 @@ void Editor::setParameter(const juce::String& id, float value)
 
 void Editor::pull()
 {
+    seenStatus = processor.statusRevision();
     view = processor.editorState();
-    seenRevision = processor.revisionNow();
+    seenRevision = view.session.revision;
+    if (interruptedTake && !view.loading)
+    {
+        interruptedTake = false;
+        if (view.status.isEmpty())
+            setToast("Saved the interrupted take");
+    }
+    if (page == 3 && !view.loading)
+        refreshProjects();
     selectedChop = juce::jlimit(0, std::max(0, view.session.slices.count - 1), selectedChop);
     wave.contentChanged();
     syncControls();
@@ -445,6 +675,21 @@ void Editor::syncControls()
     const auto& edit = view.session.edit;
     const auto hasSample = view.session.sample != nullptr;
     const auto chops = view.session.slices.count;
+    const auto capturing = capture != nullptr;
+    const auto canEdit = !capturing && !sequenceArmed && !view.loading;
+    load.setEnabled(canEdit && !micPermissionPending);
+    mic.setEnabled(!micPermissionPending && (capturing || canEdit));
+    mic.setButtonText(capturing ? "STOP MIC" : "MIC");
+    mic.setTitle(capturing ? "Stop microphone recording" : "Record a microphone sample");
+    mic.setToggleState(capturing, juce::dontSendNotification);
+    sequenceRecord.setEnabled(hasSample && !capturing && !view.loading && !micPermissionPending);
+    sequenceRecord.setButtonText(sequenceArmed ? "DONE" : "REC SEQ");
+    sequenceRecord.setTitle(sequenceArmed ? "Finish recording the sequence" : "Record pads to the sequence");
+    sequenceRecord.setToggleState(sequenceArmed, juce::dontSendNotification);
+    play.setEnabled(hasSample && !capturing && !view.loading);
+    tabs.setEnabled(!capturing && !sequenceArmed);
+    for (auto* control : std::initializer_list<juce::Component*> { &mode, &density, &division, &tempo, &rate, &banks })
+        control->setEnabled(canEdit);
     mode.setSelected((int) edit.mode);
     if (edit.mode == chop::SliceMode::transient)
         density.setOptions({ "8", "16", "32" }, { 8, 16, 32 });
@@ -453,11 +698,11 @@ void Editor::syncControls()
     density.setSelected(edit.density);
     division.setSelected(edit.beatDivision);
     const auto beat = edit.mode == chop::SliceMode::beat;
-    density.setVisible(!beat);
-    division.setVisible(beat);
+    density.setVisible(page == 4 && !beat);
+    division.setVisible(page == 4 && beat);
     tempo.setValue(processor.parameters.getRawParameterValue("tempo")->load());
-    dice.setEnabled(hasSample);
-    dice.setSubtitle(!hasSample ? "Load a sample first" : (edit.anchor[(size_t) edit.bank] >= 0 ? "Dovetail on" : "Flip the chops"));
+    dice.setEnabled(hasSample && canEdit);
+    dice.setSubtitle(!hasSample ? "Add a sample" : (edit.anchor[(size_t) edit.bank] >= 0 ? "Dovetail" : "Randomize"));
     banks.setSelected(edit.bank);
     rate.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("rate")->load()));
     pitchMode.setSelected(juce::roundToInt(processor.parameters.getRawParameterValue("pitchMode")->load()));
@@ -471,8 +716,11 @@ void Editor::syncControls()
     for (int i = 0; i < 16; ++i)
     {
         auto& p = *pads[(size_t) i];
+        if (p.chop != padBank * 16 + i || capturing || view.loading)
+            p.release();
         p.chop = padBank * 16 + i;
-        p.exists = hasSample && p.chop < chops;
+        p.exists = hasSample && !capturing && !view.loading && p.chop < chops;
+        p.setTitle("Chop " + juce::String(p.chop + 1));
         p.repaint();
     }
     pin.setToggleState(edit.anchor[(size_t) edit.bank] == selectedStep, juce::dontSendNotification);
@@ -480,6 +728,9 @@ void Editor::syncControls()
     shareChops.setEnabled(hasSample);
     shareChop.setEnabled(hasSample);
     shareLoop.setEnabled(hasSample && chop::hitCount(pattern()) > 0);
+    saveSet.setEnabled(hasSample && canEdit);
+    openSet.setEnabled(canEdit && !micPermissionPending && projectList.getSelectedItemIndex() >= 0);
+    projectList.setEnabled(canEdit && !projects.isEmpty());
     steps.repaint();
 }
 
@@ -489,6 +740,152 @@ void Editor::auditionChop(int c)
     processor.previewChop(c);
     wave.repaint();
     content.repaint();
+}
+
+void Editor::playPad(int c)
+{
+    processor.keyDown(c);
+    selectedChop = c;
+    if (sequenceArmed)
+    {
+        const auto step = std::max(0, processor.padRecordStep());
+        recordedPattern[static_cast<std::size_t>(step)].slice = c;
+    }
+}
+
+void Editor::toggleSequenceRecord()
+{
+    if (sequenceArmed)
+        return finishSequenceRecord();
+    if (view.session.sample == nullptr || capture != nullptr || view.loading)
+        return;
+
+    recordedPattern = {};
+    recordedSample = view.session.sampleRevision;
+    recordedBank = view.session.edit.bank;
+    sequenceArmed = true;
+    showPage(0);
+    processor.setPlaying(true);
+    syncControls();
+    wave.repaint();
+}
+
+void Editor::finishSequenceRecord()
+{
+    if (!sequenceArmed)
+        return;
+    sequenceArmed = false;
+    const auto hits = chop::hitCount(recordedPattern);
+    const auto accepted = hits > 0 && processor.commitPadTake(recordedBank, recordedSample, recordedPattern);
+    pull();
+    if (accepted)
+        setToast("Sequence added to bank " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + recordedBank)));
+    else
+        setToast(hits == 0 ? "No pad hits recorded" : "The active sample or bank changed");
+}
+
+void Editor::toggleMic()
+{
+    if (capture != nullptr)
+        return finishMic(false);
+    if (micPermissionPending)
+        return;
+   #if JUCE_IOS
+    micPermissionPending = true;
+    syncControls();
+    juce::Component::SafePointer<Editor> safe(this);
+    requestMicrophonePermission([safe](bool granted)
+    {
+        if (safe == nullptr)
+            return;
+        safe->micPermissionPending = false;
+        safe->syncControls();
+        if (granted)
+            safe->startMic();
+        else
+            safe->setToast("Enable the microphone in iPhone Settings");
+    });
+   #else
+    setToast("Mic capture is available in the iPhone app");
+   #endif
+}
+
+void Editor::startMic()
+{
+   #if JUCE_IOS
+    if (capture != nullptr || view.loading || sequenceArmed)
+        return;
+    auto* holder = juce::StandalonePluginHolder::getInstance();
+    if (holder == nullptr || holder->processor.get() != &processor)
+        return setToast("No microphone device is available");
+    processor.stopAll();
+    for (auto& pad : pads)
+        pad->release();
+    auto take = std::make_unique<MicCapture>();
+    if (const auto error = take->start(holder->deviceManager); error.isNotEmpty())
+        return setToast(error);
+    capture = std::move(take);
+    toastTicks = 0;
+    showPage(0);
+    syncControls();
+    wave.repaint();
+   #endif
+}
+
+void Editor::finishMic(bool interrupted)
+{
+    if (capture == nullptr)
+        return;
+    auto take = std::move(capture);
+    interruptedTake = interrupted || take->interrupted.load(std::memory_order_relaxed);
+    take->disconnect();
+    const auto frames = take->frames.load(std::memory_order_relaxed);
+    if (frames > 0)
+    {
+        const auto folder = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Recordings");
+        processor.loadRecording(std::move(take->audio), frames, take->sampleRate, folder);
+    }
+    else
+    {
+        interruptedTake = false;
+        setToast("No mic audio captured. Check your audio route.");
+    }
+    pull();
+}
+
+void Editor::setToast(juce::String message)
+{
+    toast = std::move(message);
+    toastTicks = 105;
+    content.repaint(0, 178, designWidth, 30);
+}
+
+bool Editor::paintCapture(juce::Graphics& g, juce::Rectangle<float> r) const
+{
+    if (capture == nullptr)
+        return false;
+    g.setColour(ink2);
+    g.fillRoundedRectangle(r, 10.0f);
+    g.setColour(brand.meterClip);
+    g.fillEllipse(16.0f, 18.0f, 8.0f, 8.0f);
+    g.setColour(text);
+    g.setFont(sans(14.0f, true));
+    g.drawText("RECORDING MIC", r.withTrimmedLeft(32.0f).withHeight(44.0f), juce::Justification::centredLeft);
+    const auto seconds = static_cast<int>(capture->frames.load(std::memory_order_relaxed) / capture->sampleRate);
+    g.setFont(mono(14.0f));
+    g.drawText(two(seconds / 60) + ":" + two(seconds % 60), r.reduced(16.0f, 0.0f).withHeight(44.0f), juce::Justification::centredRight);
+    const auto level = capture->peak.load(std::memory_order_relaxed);
+    const auto db = juce::Decibels::gainToDecibels(level, -60.0f);
+    const auto meter = juce::Rectangle<float>(16.0f, 52.0f, r.getWidth() - 32.0f, 9.0f);
+    g.setColour(line);
+    g.fillRoundedRectangle(meter, 4.0f);
+    g.setColour(db >= -0.3f ? brand.meterClip : db >= -6.0f ? brand.meterHot : brand.meterOk);
+    g.fillRoundedRectangle(meter.withWidth(meter.getWidth() * juce::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f)), 4.0f);
+    g.setColour(dim);
+    g.setFont(sans(11.0f));
+    g.drawText("Mono input  /  Up to " + juce::String(MicCapture::maxSeconds) + " seconds", r.reduced(16.0f, 0.0f).withTrimmedTop(70.0f),
+               juce::Justification::centredLeft);
+    return true;
 }
 
 void Editor::selectStep(int s)
@@ -515,7 +912,8 @@ void Editor::editStep(const std::function<void(chop::Step&)>& change)
 
 void Editor::chooseSample()
 {
-    chooser = std::make_unique<juce::FileChooser>("Choose a sample", juce::File {},
+    const auto recordings = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Recordings");
+    chooser = std::make_unique<juce::FileChooser>("Choose a sample", recordings.isDirectory() ? recordings : juce::File(),
                                                   "*.wav;*.wave;*.aif;*.aiff;*.flac;*.mp3;*.m4a;*.caf;*.ogg");
     juce::Component::SafePointer<Editor> safe(this);
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -549,18 +947,65 @@ void Editor::chooseSample()
         });
 }
 
+void Editor::refreshProjects()
+{
+    const auto selected = projectList.getText();
+    projects = projectFolder().findChildFiles(juce::File::findFiles, false, "*.echop");
+    std::sort(projects.begin(), projects.end(), [](const auto& a, const auto& b)
+    {
+        return a.getFileName().compareNatural(b.getFileName()) < 0;
+    });
+    projectList.clear(juce::dontSendNotification);
+    for (int i = 0; i < projects.size(); ++i)
+    {
+        const auto name = projects[i].getFileNameWithoutExtension();
+        projectList.addItem(name, i + 1);
+        if (name == selected)
+            projectList.setSelectedId(i + 1, juce::dontSendNotification);
+    }
+    projectList.setTextWhenNothingSelected(projects.isEmpty() ? "No saved projects" : "Choose a saved project");
+}
+
+void Editor::saveProject()
+{
+    if (namePrompt != nullptr)
+        return;
+    auto* prompt = new juce::AlertWindow("Save project", {}, juce::MessageBoxIconType::NoIcon);
+    auto title = juce::String::fromUTF8(view.session.sample->name.c_str()).substring(0, 60);
+    prompt->addTextEditor("name", title, "Project name");
+    prompt->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    prompt->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    namePrompt = prompt;
+    juce::Component::SafePointer<Editor> safe(this);
+    juce::Component::SafePointer<juce::AlertWindow> safePrompt(prompt);
+    prompt->enterModalState(true, juce::ModalCallbackFunction::create([safe, safePrompt](int result)
+    {
+        if (safe == nullptr || safePrompt == nullptr || result != 1)
+            return;
+        auto name = juce::File::createLegalFileName(safePrompt->getTextEditorContents("name").trim()).substring(0, 60);
+        if (name.isEmpty())
+            return safe->setToast("Enter a project name");
+        const auto file = projectFolder().getNonexistentChildFile(name, ".echop", true);
+        safe->processor.saveMobileProject(file);
+        safe->pull();
+    }), true);
+}
+
+void Editor::openProject()
+{
+    const auto index = projectList.getSelectedItemIndex();
+    if (!juce::isPositiveAndBelow(index, projects.size()))
+        return;
+    processor.stopAll();
+    processor.openMobileProject(projects[index]);
+    pull();
+}
+
 void Editor::share(const juce::StringArray& files)
 {
     if (files.isEmpty())
-    {
-        toast = "Nothing to export yet";
-        toastTicks = 60;
-        content.repaint();
-        return;
-    }
-    toast = files.size() == 1 ? "Saved " + juce::File(files[0]).getFileName() : "Saved " + juce::String(files.size()) + " chops";
-    toastTicks = 90;
-    content.repaint();
+        return setToast("Nothing to export yet");
+    setToast(files.size() == 1 ? "Saved " + juce::File(files[0]).getFileName() : "Saved " + juce::String(files.size()) + " chops");
    #if JUCE_IOS || JUCE_ANDROID
     juce::Array<juce::URL> urls;
     for (const auto& f : files)
@@ -573,17 +1018,23 @@ void Editor::share(const juce::StringArray& files)
 
 void Editor::showPage(int p)
 {
-    page = juce::jlimit(0, 3, p);
+    if (page == 0 && p != 0)
+        for (auto& pad : pads)
+            pad->release();
+    page = juce::jlimit(0, 4, p);
     tabs.setSelected(page);
     for (auto& pad : pads) pad->setVisible(page == 0);
-    padBanks.setVisible(page == 0 && view.session.slices.count > 16);
+    mode.setVisible(page == 4);
     for (auto* c : std::initializer_list<juce::Component*> { &banks, &rate, &steps, &prevChop, &nextChop, &rest, &pin, &reverse,
                                                               &inOrder, &clear, &undo, &chaos, &dovetail, &swing })
         c->setVisible(page == 1);
     for (auto* c : std::initializer_list<juce::Component*> { &pitch, &output, &drive, &align, &pitchMode, &vintage, &choke })
         c->setVisible(page == 2);
-    for (auto* c : std::initializer_list<juce::Component*> { &shareLoop, &shareChops, &shareChop, &loopBars })
+    for (auto* c : std::initializer_list<juce::Component*> { &shareLoop, &shareChops, &shareChop, &loopBars, &saveSet, &openSet, &projectList })
         c->setVisible(page == 3);
+    if (page == 3)
+        refreshProjects();
+    syncControls();
     layoutPage();
     content.repaint();
 }
@@ -594,22 +1045,21 @@ void Editor::resized()
     const auto insets = safeInsets();
     appliedInsets = insets;
     auto area = insets.subtractedFrom(getLocalBounds());
-    scale = std::min(area.getWidth() / (float) designWidth, area.getHeight() / (float) designHeight);
+    scale = std::max(0.1f, std::min(area.getWidth() / (float) designWidth, area.getHeight() / (float) designHeight));
     const auto x = area.getX() + (area.getWidth() - designWidth * scale) * 0.5f;
     // A taller phone gives the extra height to the pads.
     extraHeight = std::max(0, (int) (area.getHeight() / scale) - designHeight);
     content.setBounds(0, 0, designWidth, designHeight + extraHeight);
     content.setTransform(juce::AffineTransform::scale(scale).translated(x, (float) area.getY()));
 
-    load.setBounds(306, 8, 72, 32);
-    wave.setBounds(12, 50, 366, 120);
-    mode.setBounds(12, 178, 236, 30);
-    density.setBounds(254, 178, 124, 30);
-    division.setBounds(254, 178, 124, 30);
-    play.setBounds(12, 216, 56, 56);
-    tempo.setBounds(76, 218, 104, 52);
-    dice.setBounds(188, 216, 190, 56);
-    tabs.setBounds(12, 282, 366, 34);
+    mic.setBounds(225, 6, 80, 55);
+    load.setBounds(311, 6, 67, 55);
+    wave.setBounds(12, 67, 366, 107);
+    play.setBounds(12, 213, 56, 56);
+    sequenceRecord.setBounds(76, 213, 77, 56);
+    tempo.setBounds(161, 215, 74, 52);
+    dice.setBounds(243, 213, 135, 56);
+    tabs.setBounds(12, 276, 366, 45);
     layoutPage();
 }
 
@@ -617,8 +1067,8 @@ void Editor::layoutPage()
 {
     const juce::Rectangle<int> pageArea(12, 326, 366, 426 + extraHeight);
     // PADS: 4 x 4, MPC order (pad 1 bottom left)
-    const auto top = padBanks.isVisible() ? 36 : 0;
-    padBanks.setBounds(pageArea.getX(), pageArea.getY(), 180, 28);
+    const auto top = padBanks.isVisible() ? 48 : 0;
+    padBanks.setBounds(pageArea.getX(), pageArea.getY(), 180, 44);
     const auto w = pageArea.getWidth() / 4.0f, h = (pageArea.getHeight() - top) / 4.0f;
     for (int i = 0; i < 16; ++i)
     {
@@ -648,11 +1098,18 @@ void Editor::layoutPage()
     output.setBounds(140, 524, 110, 104);
     align.setBounds(268, 524, 110, 104);
     choke.setBounds(12, 658, 366, 32);
-    // EXPORT
-    loopBars.setBounds(134, 336, 244, 32);
-    shareLoop.setBounds(12, 380, 366, 52);
-    shareChops.setBounds(12, 480, 366, 52);
-    shareChop.setBounds(12, 580, 366, 52);
+    // PROJECT
+    saveSet.setBounds(12, 350, 366, 52);
+    projectList.setBounds(12, 410, 244, 52);
+    openSet.setBounds(264, 410, 114, 52);
+    loopBars.setBounds(125, 518, 253, 45);
+    shareLoop.setBounds(12, 572, 366, 51);
+    shareChops.setBounds(12, 631, 178, 51);
+    shareChop.setBounds(198, 631, 180, 51);
+    // CHOP
+    mode.setBounds(12, 350, 366, 52);
+    density.setBounds(132, 412, 246, 52);
+    division.setBounds(132, 412, 246, 52);
 }
 
 void Editor::paint(juce::Graphics& g)
@@ -671,7 +1128,20 @@ void Editor::paintContent(juce::Graphics& g)
     auto name = s.sample != nullptr ? juce::String::fromUTF8(s.sample->name.c_str()) : juce::String("No sample");
     if (s.sample != nullptr)
         name << "  -  " << s.slices.count << " chops";
-    g.drawFittedText(name, 52, 30, 248, 14, juce::Justification::centredLeft, 1, 0.8f);
+    g.drawFittedText(name, 52, 31, 164, 18, juce::Justification::centredLeft, 1, 0.8f);
+
+    const auto message = toastTicks > 0 ? toast : view.status;
+    if (message.isNotEmpty() && (s.sample != nullptr || view.loading || toastTicks > 0))
+    {
+        g.setFont(sans(12.0f, true));
+        g.setColour(view.loading ? live : dim);
+        g.drawFittedText(message, 13, 178, 364, 29, juce::Justification::centredLeft, 1, 0.8f);
+    }
+    if (capture != nullptr)
+    {
+        g.setColour(brand.meterClip);
+        g.fillEllipse(231.0f, 11.0f, 6.0f, 6.0f);
+    }
 
     if (page == 1)
     {
@@ -685,7 +1155,7 @@ void Editor::paintContent(juce::Graphics& g)
         g.drawText(st.slice >= 0 && chops > 0 ? two(st.slice % chops + 1) : juce::String("--"), 136, 488, 56, 34, juce::Justification::centred);
         g.setColour(faint);
         g.setFont(sans(10.5f));
-        g.drawFittedText("Tap a step, then pick its chop with < >. PIN a step and roll RANDOMIZE to Dovetail around it.",
+        g.drawFittedText("Tap a step and pick a chop. PIN a hit, then FLIP to use Dovetail.",
                          12, 684, 366, 30, juce::Justification::topLeft, 2);
     }
     else if (page == 2)
@@ -700,27 +1170,24 @@ void Editor::paintContent(juce::Graphics& g)
     }
     else if (page == 3)
     {
-        label(g, "LOOP LENGTH", { 12.0f, 336.0f, 120.0f, 32.0f });
+        label(g, "PROJECT FILES", { 12.0f, 326.0f, 170.0f, 20.0f });
+        label(g, "WAV EXPORT", { 12.0f, 486.0f, 170.0f, 22.0f });
+        label(g, "LOOP PASSES", { 12.0f, 518.0f, 110.0f, 45.0f });
         g.setColour(dim);
-        g.setFont(sans(11.0f));
-        g.drawFittedText("This bank as you hear it, at the tempo, looping seamlessly.", 12, 436, 366, 34, juce::Justification::topLeft, 2);
-        g.drawFittedText("Every chop as its own file, numbered.", 12, 536, 366, 34, juce::Justification::topLeft, 2);
-        g.drawFittedText("The chop you tapped last (" + two(selectedChop + 1) + ").", 12, 636, 366, 20, juce::Justification::topLeft, 1);
-        g.setColour(faint);
-        g.drawFittedText("Share to AirDrop, Messages, FL Studio Mobile or any app that opens audio. Everything is also kept in "
-                         "Files > On My iPhone > Epsilon Chop.", 12, 672, 366, 48, juce::Justification::topLeft, 3);
+        g.setFont(sans(12.0f));
+        g.drawFittedText("Share WAVs through AirDrop or Files.", 12, 699, 366, 32, juce::Justification::topLeft, 2);
     }
-
-    if (toastTicks > 0)
+    else if (page == 4)
     {
-        auto r = juce::Rectangle<float>(40.0f, 704.0f, 310.0f, 34.0f);
-        g.setColour(ink3.withAlpha(0.96f));
-        g.fillRoundedRectangle(r, 17.0f);
-        g.setColour(live);
-        g.drawRoundedRectangle(r.reduced(0.5f), 17.0f, 1.0f);
+        label(g, "SLICE METHOD", { 12.0f, 326.0f, 170.0f, 20.0f });
+        label(g, view.session.edit.mode == chop::SliceMode::beat ? "BEAT DIVISION" : "CHOP COUNT",
+              { 12.0f, 412.0f, 116.0f, 52.0f });
         g.setColour(text);
-        g.setFont(sans(12.0f, true));
-        g.drawFittedText(toast, r.toNearestInt().reduced(12, 0), juce::Justification::centred, 1);
+        g.setFont(sans(14.0f, true));
+        g.drawText("Drag a slice marker to adjust the cut", 12, 485, 366, 23, juce::Justification::centredLeft);
+        g.setColour(dim);
+        g.setFont(sans(12.0f));
+        g.drawText("Tap a chop on the waveform to audition it.", 12, 513, 366, 25, juce::Justification::centredLeft);
     }
 }
 
@@ -728,7 +1195,17 @@ void Editor::timerCallback()
 {
     if (safeInsets() != appliedInsets)        // iOS reports the real safe area once the window is up
         resized();
-    if (processor.revisionNow() != seenRevision)
+    if (capture != nullptr)
+    {
+        const auto elapsed = juce::Time::getMillisecondCounterHiRes() - capture->started;
+        const auto interrupted = capture->interrupted.load(std::memory_order_relaxed)
+                                || (elapsed > 1500.0 && capture->frames.load(std::memory_order_relaxed) == 0);
+        if (interrupted || capture->reachedLimit.load(std::memory_order_relaxed))
+            finishMic(interrupted);
+        else
+            wave.repaint();
+    }
+    if (processor.revisionNow() != seenRevision || processor.statusRevision() != seenStatus)
         pull();
     const auto playing = processor.isPlaying();
     if (playing != seenPlaying)
@@ -753,8 +1230,9 @@ void Editor::timerCallback()
         seenStep = step;
         steps.playing = step;
         if (page == 1) steps.repaint();
+        if (sequenceArmed) wave.repaint();
     }
     if (toastTicks > 0 && --toastTicks == 0)
-        content.repaint(0, 700, designWidth, 44);
+        content.repaint(0, 178, designWidth, 30);
 }
 }

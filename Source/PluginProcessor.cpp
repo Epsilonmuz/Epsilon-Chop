@@ -10,6 +10,7 @@ namespace
 {
 constexpr int stateMagic = 0x50484345;
 constexpr int stateVersion = 3;
+constexpr int maxStateBytes = 2 * chop::maxSampleFrames * 4 + 65536;
 constexpr int historyLimit = 32;
 constexpr int maximumNameBytes = 1024;
 
@@ -390,6 +391,7 @@ void EpsilonChopProcessor::releaseResources()
 {
     engine.reset();
     currentStep.store(-1);
+    nearestStep.store(-1);
     currentFrame.store(-1);
     currentSlice.store(-1);
 }
@@ -452,6 +454,7 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     {
         engine.stop(chop::VoiceOrigin::preview);
         engine.stop(chop::VoiceOrigin::midi);
+        engine.stop(chop::VoiceOrigin::keys);
     }
     else if (request >= 0)
         engine.trigger(request, 1.0f, chop::VoiceOrigin::preview);
@@ -468,7 +471,7 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             {
                 const auto code = keyEvents[static_cast<std::size_t>(i)];
                 const auto chopIndex = std::abs(code) - 1;
-                if (code > 0 && chopIndex < chops)
+                if (request != -2 && code > 0 && chopIndex < chops)
                     engine.trigger(chopIndex, 1.0f, chop::VoiceOrigin::keys, 0, 0, false, chopIndex, aligned);
                 else if (code < 0)
                     engine.noteOff(chop::VoiceOrigin::keys, chopIndex);
@@ -510,6 +513,7 @@ void EpsilonChopProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     }
     midi.clear();
     currentStep.store(engine.currentStep(), std::memory_order_relaxed);
+    nearestStep.store(engine.nearestStep(frames), std::memory_order_relaxed);
     currentFrame.store(engine.currentFrame(), std::memory_order_relaxed);
     currentSlice.store(engine.currentSlice(), std::memory_order_relaxed);
     synced.store(engine.hostSynced(), std::memory_order_relaxed);
@@ -579,28 +583,76 @@ void EpsilonChopProcessor::pushKey(int code) noexcept
         keyEvents[static_cast<std::size_t>(scope.startIndex2)] = code;
 }
 
+std::uint64_t EpsilonChopProcessor::beginLoad(juce::String message)
+{
+    const std::lock_guard<std::mutex> lock(mutex);
+    loading = true;
+    setStatusLocked(std::move(message));
+    return loadSerial.fetch_add(1) + 1;
+}
+
+void EpsilonChopProcessor::finishLoad(std::uint64_t ticket, juce::String message)
+{
+    const std::lock_guard<std::mutex> lock(mutex);
+    if (loadSerial.load() == ticket)
+    {
+        loading = false;
+        setStatusLocked(std::move(message));
+    }
+}
+
 void EpsilonChopProcessor::loadFile(const juce::File& file)
 {
-    const auto ticket = loadSerial.fetch_add(1) + 1;
-    {
-        const std::lock_guard<std::mutex> lock(mutex);
-        loading = true;
-        setStatusLocked("Loading " + file.getFileName() + "...");
-    }
+    const auto ticket = beginLoad("Loading " + file.getFileName() + "...");
     loader.addJob([this, file, ticket] { loadOnWorker(file, ticket); });
+}
+
+void EpsilonChopProcessor::loadRecording(juce::AudioBuffer<float> audio, int frames, double rate, const juce::File& folder)
+{
+    const auto ticket = beginLoad("Saving mic take...");
+    if (frames > audio.getNumSamples() || !chop::validSampleSize(rate, audio.getNumChannels(), frames))
+        return finishLoad(ticket, "No audio was recorded");
+
+    // The worker owns the buffer after capture stops. The WAV remains in Files even
+    // if the user switches samples before analysis finishes.
+    const auto take = std::make_shared<juce::AudioBuffer<float>>(std::move(audio));
+    loader.addJob([this, take, frames, rate, folder, ticket]
+    {
+        try
+        {
+            if (!folder.createDirectory())
+                return finishLoad(ticket, "Couldn't create the Recordings folder");
+            const auto name = "Take " + juce::Time::getCurrentTime().formatted("%Y-%m-%d %H%M%S");
+            const auto file = folder.getNonexistentChildFile(name, ".wav", true);
+            juce::TemporaryFile temporary(file);
+            {
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::OutputStream> stream = temporary.getFile().createOutputStream();
+                if (stream == nullptr)
+                    return finishLoad(ticket, "Couldn't open a file for the mic take");
+                const auto options = juce::AudioFormatWriterOptions{}.withSampleRate(rate)
+                                         .withNumChannels(take->getNumChannels()).withBitsPerSample(24);
+                auto writer = wav.createWriterFor(stream, options);
+                if (writer == nullptr || !writer->writeFromAudioSampleBuffer(*take, 0, frames) || !writer->flush())
+                    return finishLoad(ticket, "Couldn't write the mic take");
+            }
+            if (!temporary.overwriteTargetFileWithTemporary())
+                return finishLoad(ticket, "Couldn't save the mic take");
+            loadOnWorker(file, ticket);
+        }
+        catch (const std::exception&)
+        {
+            finishLoad(ticket, "Couldn't save the mic take");
+        }
+    });
 }
 
 void EpsilonChopProcessor::loadOnWorker(juce::File file, std::uint64_t ticket)
 {
     const auto cancelled = [this, ticket] { return loadSerial.load() != ticket; };
-    const auto report = [this, &cancelled](juce::String message)
+    const auto report = [this, ticket](juce::String message)
     {
-        const std::lock_guard<std::mutex> lock(mutex);
-        if (!cancelled())
-        {
-            loading = false;
-            setStatusLocked(std::move(message));
-        }
+        finishLoad(ticket, std::move(message));
     };
     if (cancelled())
         return;
@@ -950,6 +1002,24 @@ void EpsilonChopProcessor::setStep(int index, chop::Step value, bool remember)
     }, remember);
 }
 
+bool EpsilonChopProcessor::commitPadTake(int bank, std::uint64_t sample, const chop::Pattern& hits)
+{
+    bool accepted = false;
+    edit([&](auto& state)
+    {
+        if (state.sampleRevision != sample || state.edit.bank != bank)
+            return false;
+        accepted = true;
+        auto& pattern = state.edit.patterns[static_cast<std::size_t>(bank)];
+        const auto before = pattern;
+        for (std::size_t step = 0; step < pattern.size(); ++step)
+            if (hits[step].slice >= 0 && hits[step].slice < state.slices.count)
+                pattern[step] = hits[step];
+        return pattern != before;
+    });
+    return accepted;
+}
+
 void EpsilonChopProcessor::editBoundary(int index, int position)
 {
     edit([=](auto& state)
@@ -971,39 +1041,53 @@ void EpsilonChopProcessor::editBoundary(int index, int position)
     });
 }
 
-void EpsilonChopProcessor::getStateInformation(juce::MemoryBlock& data)
+juce::String EpsilonChopProcessor::parameterXml()
 {
-    const auto snapshot = editorState().session;
+    if (auto xml = parameters.copyState().createXml())
+        return xml->toString(juce::XmlElement::TextFormat().singleLine().withoutHeader());
+    return {};
+}
+
+void EpsilonChopProcessor::writeState(juce::MemoryBlock& data, const chop::Session& snapshot,
+                                      const juce::String& xml, float gain, bool followHost)
+{
     juce::MemoryOutputStream out(data, false);
     out.writeInt(stateMagic);
     out.writeInt(stateVersion);
-    out.writeFloat(outputParameter->load());
-    out.writeInt(patternParameter->load() >= 0.5f ? 1 : 0);
+    out.writeFloat(gain);
+    out.writeInt(followHost ? 1 : 0);
     out.writeInt64(static_cast<juce::int64>(snapshot.seed));
     writeEdit(out, snapshot.edit);
     writeSample(out, snapshot.sample.get());
-    juce::String xmlText;
-    if (auto xml = parameters.copyState().createXml())
-        xmlText = xml->toString(juce::XmlElement::TextFormat().singleLine().withoutHeader());
-    const auto utf8 = xmlText.toStdString();
+    const auto utf8 = xml.toStdString();
     out.writeInt(static_cast<int>(utf8.size()));
     out.write(utf8.data(), utf8.size());
     out.writeInt(stateMagic);   // end marker: a truncated chunk is rejected
     out.flush();
 }
 
+void EpsilonChopProcessor::getStateInformation(juce::MemoryBlock& data)
+{
+    writeState(data, editorState().session, parameterXml(), outputParameter->load(), patternParameter->load() >= 0.5f);
+}
+
 void EpsilonChopProcessor::setStateInformation(const void* data, int size)
 {
-    if (data == nullptr || size < 24 || size > 2 * chop::maxSampleFrames * 4 + 65536)
-        return;
+    restoreState(data, size);
+}
+
+bool EpsilonChopProcessor::restoreState(const void* data, int size, std::uint64_t ticket)
+{
+    if (data == nullptr || size < 24 || size > maxStateBytes)
+        return false;
     try
     {
         juce::MemoryInputStream in(data, static_cast<std::size_t>(size), false);
         if (in.readInt() != stateMagic)
-            return;
+            return false;
         const auto version = in.readInt();
         if (version < 1 || version > stateVersion)
-            return;
+            return false;
         const auto gain = in.readFloat();
         const auto run = in.readInt();
         const auto seed = in.readInt64();
@@ -1011,7 +1095,7 @@ void EpsilonChopProcessor::setStateInformation(const void* data, int size)
         std::shared_ptr<chop::Sample> sample;
         if (!std::isfinite(gain) || gain < -24.01f || gain > 6.01f || run < 0 || run > 1
             || seed < 0 || seed > 0xffffffffLL || !readEdit(in, next->edit, version) || !readSample(in, sample, version))
-            return;
+            return false;
         next->sample = sample;
         if (next->edit.manual.count > 0 && (next->sample == nullptr
             || !chop::validSlices(next->edit.manual, next->sample->length())))
@@ -1023,26 +1107,29 @@ void EpsilonChopProcessor::setStateInformation(const void* data, int size)
         {
             const auto xmlSize = in.readInt();
             if (xmlSize < 0 || xmlSize > 65536 || in.getNumBytesRemaining() != xmlSize + 4)
-                return;
+                return false;
             juce::MemoryBlock text;
             if (xmlSize > 0 && in.readIntoMemoryBlock(text, xmlSize) != xmlSize)
-                return;
+                return false;
             if (in.readInt() != stateMagic)
-                return;
+                return false;
             if (xmlSize > 0)
                 xml = juce::parseXML(text.toString());
         }
         else if (!in.isExhausted())
-            return;
+            return false;
+        if (ticket != 0 && (sample == nullptr || xml == nullptr || !xml->hasTagName(parameters.state.getType())))
+            return false;
 
+        std::uint64_t restoredTicket = 0;
         {
             const std::lock_guard<std::mutex> lock(mutex);
-            loadSerial.fetch_add(1);
-            loading = false;
+            if (ticket != 0 && ticket != loadSerial.load())
+                return false;
+            restoredTicket = loadSerial.fetch_add(1) + 1;
             next->sampleRevision = ++sampleRevision;
             history.clear();
             previewRequest.store(-1);
-            setStatusLocked({});
             publishLocked(std::move(next));
         }
         if (xml != nullptr && xml->hasTagName(parameters.state.getType()))
@@ -1062,11 +1149,60 @@ void EpsilonChopProcessor::setStateInformation(const void* data, int size)
             set("align", 0.0f);
             set("vintage", 0.0f);
         }
+        finishLoad(restoredTicket, ticket == 0 ? juce::String() : juce::String("Project opened"));
+        return true;
     }
     catch (const std::exception&)
     {
-        // Leave the current state available if a host passes an unusable chunk.
+        return false;
     }
+}
+
+void EpsilonChopProcessor::saveMobileProject(const juce::File& file)
+{
+    const auto snapshot = editorState().session;
+    const auto xml = parameterXml();
+    const auto gain = outputParameter->load();
+    const auto followHost = patternParameter->load() >= 0.5f;
+    const auto ticket = beginLoad("Saving project...");
+    loader.addJob([this, snapshot, xml, gain, followHost, file, ticket]
+    {
+        try
+        {
+            juce::MemoryBlock data;
+            writeState(data, snapshot, xml, gain, followHost);
+            if (!file.getParentDirectory().createDirectory() || !file.replaceWithData(data.getData(), data.getSize()))
+                return finishLoad(ticket, "Couldn't save the project");
+            finishLoad(ticket, "Saved " + file.getFileNameWithoutExtension());
+        }
+        catch (const std::exception&)
+        {
+            finishLoad(ticket, "Couldn't save the project");
+        }
+    });
+}
+
+void EpsilonChopProcessor::openMobileProject(const juce::File& file)
+{
+    const auto ticket = beginLoad("Opening project...");
+    loader.addJob([this, file, ticket]
+    {
+        try
+        {
+            const auto stream = file.createInputStream();
+            if (stream != nullptr && stream->getTotalLength() <= maxStateBytes)
+            {
+                juce::MemoryBlock data;
+                stream->readIntoMemoryBlock(data, maxStateBytes + 1);
+                if (restoreState(data.getData(), static_cast<int>(data.getSize()), ticket))
+                    return;
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
+        finishLoad(ticket, "Couldn't open that Epsilon Chop project");
+    });
 }
 
 juce::AudioProcessorEditor* EpsilonChopProcessor::createEditor()

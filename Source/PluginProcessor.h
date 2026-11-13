@@ -48,6 +48,9 @@ public:
 
     // Editing (message thread). Every call is undoable unless noted.
     void loadFile(const juce::File&);
+    void loadRecording(juce::AudioBuffer<float>, int frames, double rate, const juce::File& folder);
+    void saveMobileProject(const juce::File&);
+    void openMobileProject(const juce::File&);
     void setMode(chop::SliceMode);
     void setDensity(int);
     void setSensitivity(int, bool remember = true);
@@ -66,6 +69,7 @@ public:
     void togglePin(int step);             // pin / unpin a step for Dovetail, not undoable
     void undo();
     void setStep(int index, chop::Step, bool remember = true);
+    bool commitPadTake(int bank, std::uint64_t sample, const chop::Pattern&);
     void editBoundary(int index, int position);
 
     // Audition
@@ -90,6 +94,7 @@ public:
 
     // Live readouts for the editor
     int playStep() const noexcept { return currentStep.load(std::memory_order_relaxed); }
+    int padRecordStep() const noexcept { return nearestStep.load(std::memory_order_relaxed); }
     int playFrame() const noexcept { return currentFrame.load(std::memory_order_relaxed); }
     int playSlice() const noexcept { return currentSlice.load(std::memory_order_relaxed); }
     bool hostSynced() const noexcept { return synced.load(std::memory_order_relaxed); }
@@ -101,8 +106,13 @@ public:
 private:
     using Mutation = std::function<bool(chop::Session&)>;
     void edit(const Mutation&, bool remember = true);
+    juce::String parameterXml();
+    static void writeState(juce::MemoryBlock&, const chop::Session&, const juce::String& xml, float gain, bool followHost);
+    bool restoreState(const void*, int size, std::uint64_t ticket = 0);
     void publishLocked(std::unique_ptr<chop::Session>);
     void setStatusLocked(juce::String);
+    std::uint64_t beginLoad(juce::String message);
+    void finishLoad(std::uint64_t ticket, juce::String message);
     void loadOnWorker(juce::File, std::uint64_t ticket);
     const chop::Session* acquireAudioState() noexcept;
     void reclaimLocked();
@@ -130,6 +140,7 @@ private:
     static_assert(std::atomic<const chop::Session*>::is_always_lock_free);
     std::atomic<std::uint64_t> loadSerial { 0 };
     std::atomic<int> previewRequest { -1 }, currentStep { -1 }, currentFrame { -1 }, currentSlice { -1 };
+    std::atomic<int> nearestStep { -1 };
     std::atomic<bool> playing { false }, synced { false }, hostTempo { false };
     std::atomic<double> currentTempo { 120.0 }, hostRate { 0.0 };
     std::atomic<float>* outputParameter = nullptr;

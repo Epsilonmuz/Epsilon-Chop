@@ -1017,6 +1017,15 @@ Engine::StepPoint Engine::locate(double tick) const noexcept
     return { first + 1, (within - 1.0 - s) / (1.0 - s), 1.0 - s };
 }
 
+int Engine::nearestStep(int sampleInBlock) const noexcept
+{
+    if (clock == Clock::off)
+        return -1;
+    const auto position = locate(tickStart + sampleInBlock * tickIncrement + tickEpsilon);
+    const auto nearest = position.step + (position.local >= 0.5 ? 1 : 0);
+    return static_cast<int>((nearest % stepCount + stepCount) % stepCount);
+}
+
 double Engine::eventTick(std::int64_t step, int sub, int ratchet) const noexcept
 {
     const auto pair = static_cast<double>(step >= 0 ? step / 2 : (step - 1) / 2);

@@ -235,6 +235,7 @@ public:
     int currentStep() const noexcept { return playStep; }
     int currentFrame() const noexcept { return playFrame; }
     int currentSlice() const noexcept { return playSlice; }
+    int nearestStep(int sampleInBlock) const noexcept;
     bool hostSynced() const noexcept { return clock == Clock::host; }
     bool running() const noexcept { return clock != Clock::off; }
     double tempo() const noexcept { return bpm; }

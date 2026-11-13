@@ -184,6 +184,7 @@ class DiceButton final : public juce::Component, public juce::SettableTooltipCli
 {
 public:
     std::function<void()> onClick;
+    juce::String title { "RANDOMIZE" };
 
     void paint(juce::Graphics& g) override
     {
@@ -215,7 +216,7 @@ public:
         auto label = inner.withTrimmedLeft(58.0f);
         g.setColour(theme::text);
         g.setFont(theme::sans(17.0f, true));
-        g.drawFittedText("RANDOMIZE", label.removeFromTop(label.getHeight() * 0.62f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.75f);
+        g.drawFittedText(title, label.removeFromTop(label.getHeight() * 0.62f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.75f);
         g.setColour(theme::dim);
         g.setFont(theme::sans(11.0f));
         g.drawFittedText(subtitle, label.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
