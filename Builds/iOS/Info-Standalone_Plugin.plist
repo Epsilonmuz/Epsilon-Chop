@@ -7,6 +7,8 @@
     <true/>
     <key>CFBundleDisplayName</key>
     <string>Epsilon Chop</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Epsilon Chop uses the microphone to record samples for your projects.</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UIViewControllerBasedStatusBarAppearance</key>
