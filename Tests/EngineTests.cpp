@@ -245,6 +245,20 @@ void internalClock()
     settings.preview = false;
     const auto silent = render(session, settings, 8192, 512, false);
     require(firstSound(silent.left, 0) < 0, "stopped engine is silent");
+
+    chop::Engine clock;
+    clock.prepare(rate);
+    clock.beginBlock(session, {}, settings, 96'000);
+    require(clock.nearestStep(0) == -1, "stopped clock has no recording step");
+    settings.preview = true;
+    settings.stepsPerQuarter = 4;
+    clock.beginBlock(session, {}, settings, 96'000);
+    require(clock.nearestStep(2'999) == 0 && clock.nearestStep(3'000) == 1, "pad hits quantize to the nearest step");
+    require(clock.nearestStep(92'999) == 15 && clock.nearestStep(93'000) == 0, "pad recording wraps to the downbeat");
+    settings.swing = 0.60f;
+    clock.reset();
+    clock.beginBlock(session, {}, settings, 96'000);
+    require(clock.nearestStep(4'799) == 0 && clock.nearestStep(4'801) == 1, "pad quantization follows swing");
 }
 
 void hostSync()

@@ -70,18 +70,24 @@ void writeFixture(const juce::File& path)
     stream.flush();
 }
 
-EpsilonChopProcessor::EditorState waitForSample(EpsilonChopProcessor& processor)
+EpsilonChopProcessor::EditorState waitForLoad(EpsilonChopProcessor& processor)
 {
     for (int attempt = 0; attempt < 800; ++attempt)
     {
         auto state = processor.editorState();
-        if (state.session.sample != nullptr && !state.loading)
-            return state;
         if (!state.loading)
-            throw std::runtime_error(state.status.toStdString());
+            return state;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     throw std::runtime_error("sample import timed out");
+}
+
+EpsilonChopProcessor::EditorState waitForSample(EpsilonChopProcessor& processor)
+{
+    auto state = waitForLoad(processor);
+    if (state.session.sample == nullptr)
+        throw std::runtime_error(state.status.toStdString());
+    return state;
 }
 
 juce::AudioBuffer<float> renderNote(EpsilonChopProcessor& processor, int note)
@@ -338,9 +344,69 @@ void testExport(EpsilonChopProcessor& processor)
     std::cout << "Export: chop, all chops, seamless pattern loop, file reuse and no overwrites passed.\n";
 }
 
+void testMobileProject(const juce::File& folder)
+{
+    EpsilonChopProcessor phone;
+    constexpr int capturedFrames = 12'000;
+    juce::AudioBuffer<float> recorded(1, capturedFrames + 2048);
+    for (int i = 0; i < capturedFrames; ++i)
+        recorded.setSample(0, i, 0.6f * std::sin(static_cast<float>(i) * 0.04f));
+    const auto recordings = folder.getChildFile("Recordings");
+    phone.loadRecording(std::move(recorded), capturedFrames, rate, recordings);
+    const auto captured = waitForSample(phone);
+    const auto wavs = recordings.findChildFiles(juce::File::findFiles, false, "*.wav");
+    require(wavs.size() == 1, "mic take is saved as one WAV");
+    require(captured.session.sample->length() == capturedFrames && captured.session.sample->channels == 1
+            && captured.session.sample->sampleRate == rate, "only captured frames are imported at their original rate");
+    require(std::abs(captured.session.sample->pcm[0][20]) > 0.4f, "mic signal survives save and import");
+
+    phone.setMode(chop::SliceMode::grid);
+    phone.setDensity(4);
+    const auto before = phone.editorState().session;
+    phone.editBoundary(1, before.slices.edge[1] + 64);
+    const auto edited = phone.editorState().session;
+    require(edited.edit.mode == chop::SliceMode::manual && edited.slices.edge[1] == before.slices.edge[1] + 64,
+            "mobile marker edit keeps the new cut");
+
+    chop::Pattern hits {};
+    hits[0].slice = 3;
+    hits[2].slice = 1;
+    require(phone.commitPadTake(0, edited.sampleRevision, hits), "pad take records into the active bank");
+    const auto performed = phone.editorState().session.edit.patterns;
+    require(performed[0][0].slice == 3 && performed[0][2].slice == 1
+            && performed[0][1] == edited.edit.patterns[0][1], "pad take overwrites only played steps");
+    require(!phone.commitPadTake(1, edited.sampleRevision, hits)
+            && !phone.commitPadTake(0, edited.sampleRevision + 1, hits), "stale pad take cannot edit the wrong pattern");
+    phone.undo();
+    require(phone.editorState().session.edit.patterns == edited.edit.patterns, "undo reverts the whole pad take");
+    phone.commitPadTake(0, edited.sampleRevision, hits);
+    auto* tempo = phone.parameters.getParameter("tempo");
+    tempo->setValueNotifyingHost(tempo->convertTo0to1(146.0f));
+
+    const auto project = folder.getChildFile("Pocket Session.echop");
+    phone.saveMobileProject(project);
+    const auto saved = waitForLoad(phone);
+    require(project.existsAsFile() && saved.status.startsWith("Saved "), "named project is saved");
+    require(wavs[0].deleteFile(), "remove the original take before reopening");
+
+    EpsilonChopProcessor reopened;
+    reopened.openMobileProject(project);
+    const auto state = waitForSample(reopened);
+    require(state.session.sample->length() == capturedFrames && state.session.slices.edge == edited.slices.edge
+            && state.session.edit.patterns == performed && std::abs(reopened.exportTempo() - 146.0) < 0.01,
+            "project embeds audio and restores cuts, patterns and tempo");
+    const auto invalid = folder.getChildFile("Corrupt.echop");
+    require(invalid.replaceWithText("truncated"), "write invalid project fixture");
+    reopened.openMobileProject(invalid);
+    const auto unchanged = waitForLoad(reopened);
+    require(unchanged.status.startsWith("Couldn't open") && unchanged.session.revision == state.session.revision,
+            "invalid project leaves the active project available");
+}
+
 void run(const char* previewFolder)
 {
     TempFolder fixture;
+    testMobileProject(fixture.path);
     const auto input = fixture.path.getChildFile("Jersey Chop Demo.wav");
     writeFixture(input);
 
@@ -493,7 +559,7 @@ void run(const char* previewFolder)
         {
             mobile::Editor phone(restored);
             phone.setSize(w, h);
-            for (int pg = 0; pg < 4; ++pg)
+            for (int pg = 0; pg < 5; ++pg)
             {
                 phone.showPage(pg);
                 phone.tick();
