@@ -27,6 +27,7 @@
             file="Source/PluginEditor.cpp"/>
       <FILE id="mob001" name="MobileEditor.cpp" compile="1" resource="0"
             file="Source/MobileEditor.cpp"/>
+      <FILE id="mob003" name="MobileAudioSession.mm" compile="1" resource="0" file="Source/MobileAudioSession.mm"/>
       <FILE id="mob002" name="MobileEditor.h" compile="0" resource="0" file="Source/MobileEditor.h"/>
       <FILE id="9980d5" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
     </GROUP>
@@ -70,7 +71,7 @@
     <XCODE_IPHONE targetFolder="Builds/iOS" bigIcon="EpsIcn" iosDeviceFamily="1,2"
                   iPhoneScreenOrientation="portrait" iPadScreenOrientation="UIInterfaceOrientationPortrait"
                   UIFileSharingEnabled="1" iosContentSharing="1" iosBackgroundAudio="0"
-                  microphonePermissionNeeded="0" customPList="&lt;plist&gt;&lt;dict&gt;&lt;key&gt;LSSupportsOpeningDocumentsInPlace&lt;/key&gt;&lt;true/&gt;&lt;key&gt;CFBundleDisplayName&lt;/key&gt;&lt;string&gt;Epsilon Chop&lt;/string&gt;&lt;/dict&gt;&lt;/plist&gt;">
+                  microphonePermissionNeeded="1" microphonePermissionsText="Epsilon Chop uses the microphone to record samples for your projects." customPList="&lt;plist&gt;&lt;dict&gt;&lt;key&gt;LSSupportsOpeningDocumentsInPlace&lt;/key&gt;&lt;true/&gt;&lt;key&gt;CFBundleDisplayName&lt;/key&gt;&lt;string&gt;Epsilon Chop&lt;/string&gt;&lt;/dict&gt;&lt;/plist&gt;">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" optimisation="3" targetName="Epsilon Chop"
                        iosDeploymentTarget="15.0" linkTimeOptimisation="0"/>
