@@ -8,6 +8,8 @@ on:
 jobs:
   macos:
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -52,10 +54,26 @@ jobs:
           name: Epsilon-Chop-macOS
           path: dist
 
+      - name: Installer (puts the VST3, AU and app in the right folders)
+        run: bash .github/scripts/make-mac-installer.sh "Epsilon Chop" "dist"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Epsilon-Chop-macOS-Installer
+          path: installer/*.pkg
+
+      - name: Publish the installer to the "latest" release (main only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/publish-latest.sh "Epsilon Chop" installer/*.pkg
+
   ios:
     # The iPhone app: builds the Projucer iOS project for a real iPhone (unsigned) and for the
     # simulator, then launches it in an iPhone simulator, checks it stays up, and screenshots it.
     runs-on: macos-15
+    permissions:
+      contents: write     # publishes Epsilon-Chop.ipa on the "latest" release
     steps:
       - uses: actions/checkout@v4
       - name: Fetch JUCE 9.0.5
@@ -64,6 +82,12 @@ jobs:
         run: |
           xcodebuild -project "Builds/iOS/Epsilon Chop.xcodeproj" -target "Epsilon Chop - Standalone Plugin" \
                      -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO -quiet build
+      - name: Package Epsilon-Chop.ipa (install with SideStore, no Xcode needed)
+        run: |
+          APP=$(find Builds/iOS/build -path "*Release-iphoneos*" -name "Epsilon Chop.app" -type d | head -1)
+          test -n "$APP" || { echo "::error::no device app was built"; exit 1; }
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qry Epsilon-Chop.ipa Payload && ls -lh Epsilon-Chop.ipa
       - name: Build for the iPhone simulator
         run: |
           xcodebuild -project "Builds/iOS/Epsilon Chop.xcodeproj" -target "Epsilon Chop - Standalone Plugin" \
@@ -96,3 +120,12 @@ jobs:
           name: EpsilonChop-iPhone-simulator-screenshot
           path: shots
           retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Epsilon-Chop-ipa
+          path: Epsilon-Chop.ipa
+      - name: Publish Epsilon-Chop.ipa to the "latest" release (main only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/publish-latest.sh "Epsilon Chop" Epsilon-Chop.ipa

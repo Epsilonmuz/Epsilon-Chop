@@ -2,6 +2,13 @@
 
 **Epsilon Sounds · v0.5.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
+## Install (no build needed)
+
+**Mac (Intel and Apple Silicon):** download [Epsilon Chop for Mac](https://github.com/Epsilonmuz/Epsilon-Chop/releases/latest/download/Epsilon-Chop-macOS-Installer.pkg). Double-click it: the VST3 goes to `/Library/Audio/Plug-Ins/VST3`, the Audio Unit to `/Library/Audio/Plug-Ins/Components` and the standalone app to Applications. Then rescan in your DAW (FL Studio: Options > Manage plugins > Find installed plugins). The first time, macOS may say it can't check the installer (it isn't notarised by Apple): click Done, then System Settings > Privacy & Security > **Open Anyway**. No Terminal commands needed. The link always gives the newest build of `main`; it is rebuilt, test-installed on GitHub's Mac and replaced on every push.
+
+**iPhone, no Xcode:** open [Epsilon-Chop.ipa](https://github.com/Epsilonmuz/Epsilon-Chop/releases/latest/download/Epsilon-Chop.ipa) on the iPhone and open it with SideStore (one-time setup as in [Finish Line](https://github.com/Epsilonmuz/Finish-Line-#install-on-iphone-without-xcode-free)). Refresh in SideStore every 7 days.
+
+
 **Pin the chop you love. Epsilon Chop builds the rest around it.**
 
 Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 16-step ribbon and flips them with one roll of the dice. Pin one chop and **Dovetail** picks every other chop so it flows out of the one before it: same key, smooth level, matching tone, all the way round the bar. **Hit Align** lands every hit exactly on the grid whatever chop goes where, **CUT** choke works like FL Studio's "Cut by 1" on every pad, and **VINTAGE** adds the punch and grit of classic 12-bit samplers. Finger-drum chops straight from your computer keyboard.
