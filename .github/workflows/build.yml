@@ -84,8 +84,12 @@ jobs:
                      -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO -quiet build
       - name: Package Epsilon-Chop.ipa (install with SideStore, no Xcode needed)
         run: |
-          APP=$(find Builds/iOS/build -path "*Release-iphoneos*" -name "Epsilon Chop.app" -type d | head -1)
-          test -n "$APP" || { echo "::error::no device app was built"; exit 1; }
+          # Projucer builds into Builds/iOS/build/<config> for both iPhone and simulator, so take it now,
+          # before the simulator build below replaces it, and check it really is the iPhone build.
+          APP=$(find Builds/iOS/build -name "Epsilon Chop.app" -type d -not -path "*simulator*" | head -1)
+          test -n "$APP" || { echo "::error::no device app was built"; find Builds/iOS/build -maxdepth 3 -name "*.app"; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist" | grep -qx iPhoneOS \
+            || { echo "::error::$APP is not an iPhone build"; exit 1; }
           rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
           zip -qry Epsilon-Chop.ipa Payload && ls -lh Epsilon-Chop.ipa
       - name: Build for the iPhone simulator
