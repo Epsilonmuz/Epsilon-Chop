@@ -18,6 +18,17 @@ juce::String twoDigits(int value)
     return juce::String(value).paddedLeft('0', 2);
 }
 
+// The chord a chop plays ("Am"), its note for a single note ("Ab"), or empty when unclear.
+juce::String chordOf(const chop::Session& session, int slice, bool* note = nullptr)
+{
+    if (note != nullptr) *note = false;
+    if (session.fit == nullptr || slice < 0 || slice >= session.fit->count)
+        return {};
+    const auto code = session.fit->chop[static_cast<std::size_t>(slice)].chord;
+    if (note != nullptr) *note = chop::isNote(code);
+    return juce::String(chop::chordName(code));
+}
+
 // Panel rectangles at design size
 const juce::Rectangle<float> heroPanel { 20.0f, 76.0f, 1080.0f, 300.0f };
 const juce::Rectangle<float> ribbonPanel { 20.0f, 388.0f, 1080.0f, 152.0f };
@@ -177,13 +188,33 @@ void WaveformView::renderCache(juce::Graphics& g, int width, int height) const
             g.setColour(selected ? ink0 : colour);
             g.setFont(mono(10.0f));
             g.drawText(twoDigits(slice + 1), tag, juce::Justification::centred);
-            if (slice < static_cast<int>(chopKeys.size()) && x1 - x0 > 46.0f)
+            auto labelX = tag.getRight() + 3.0f;
+            bool singleNote = false;
+            const auto chord = chordOf(state, slice, &singleNote);
+            const auto showKey = slice < static_cast<int>(chopKeys.size()) && x1 - x0 > (chord.isEmpty() ? 46.0f : 82.0f);
+            if (showKey)
             {
                 // The computer key that plays this chop
                 g.setColour(faint);
                 g.setFont(mono(10.0f));
                 g.drawText(juce::String::charToString(chopKeys[static_cast<std::size_t>(slice)]),
-                           juce::Rectangle<float>(tag.getRight() + 3.0f, tag.getY(), 12.0f, tag.getHeight()), juce::Justification::centred);
+                           juce::Rectangle<float>(labelX, tag.getY(), 12.0f, tag.getHeight()), juce::Justification::centred);
+                labelX += 15.0f;
+            }
+            if (chord.isNotEmpty() && x1 - x0 > 58.0f)
+            {
+                // The chord this chop plays
+                g.setFont(sans(10.5f, true));
+                const auto w = std::min(x1 - labelX - 4.0f, static_cast<float>(juce::GlyphArrangement::getStringWidthInt(sans(10.5f, true), chord)) + 10.0f);
+                const auto pillArea = juce::Rectangle<float>(labelX, tag.getY(), w, tag.getHeight());
+                // A chord gets a filled tag; a single note gets an outline.
+                g.setColour(colour.withAlpha(selected ? 0.28f : 0.16f));
+                if (singleNote)
+                    g.drawRoundedRectangle(pillArea.reduced(0.5f), 4.0f, 1.0f);
+                else
+                    g.fillRoundedRectangle(pillArea, 4.0f);
+                g.setColour(selected ? text : colour.brighter(0.25f));
+                g.drawFittedText(chord, pillArea.toNearestInt(), juce::Justification::centred, 1, 0.8f);
             }
         }
 
@@ -782,11 +813,16 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
     output.slider.setDoubleClickReturnValue(true, -3.0);
 
     // Chop mode bar
-    mode.setOptions({ "TRANSIENT", "BEAT", "GRID", "RANDOM", "MANUAL" },
-                    { static_cast<int>(chop::SliceMode::transient), static_cast<int>(chop::SliceMode::beat),
+    mode.setOptions({ "TRANSIENT", "CHORD", "BEAT", "GRID", "RANDOM", "MANUAL" },
+                    { static_cast<int>(chop::SliceMode::transient), static_cast<int>(chop::SliceMode::harmonic),
+                      static_cast<int>(chop::SliceMode::beat),
                       static_cast<int>(chop::SliceMode::grid), static_cast<int>(chop::SliceMode::random),
                       static_cast<int>(chop::SliceMode::manual) });
     mode.reportReselect = true;
+    mode.fontHeight = 10.5f;
+    mode.setTooltip("How the sample is cut. TRANSIENT: on every hit. CHORD: wherever the chord or bass note changes, "
+                    "even with no hit, and every chop is labelled with its chord. BEAT: on the beat grid. "
+                    "GRID: equal pieces. RANDOM: random cuts. MANUAL: your own cuts.");
     mode.onChange = [this](int value)
     {
         if (value == static_cast<int>(chop::SliceMode::random) && view.session.edit.mode == chop::SliceMode::random)
@@ -924,15 +960,13 @@ EpsilonChopEditor::EpsilonChopEditor(EpsilonChopProcessor& owner)
         chip.setTooltip(flagTips[static_cast<std::size_t>(i)]);
         chip.setClickingTogglesState(true);
         content.addAndMakeVisible(chip);
-        chip.onClick = [this]
-        {
-            int bits = 0;
-            for (int b = 0; b < 6; ++b)
-                if (flags[static_cast<std::size_t>(b)].getToggleState()) bits |= 1 << b;
-            processor.setRandomFlags(bits);
-            pull();
-        };
+        chip.onClick = [this] { processor.setRandomFlags(randomBits()); pull(); };
     }
+    inKey.setClickingTogglesState(true);
+    inKey.setTooltip("Keep rolls in key: SWAP only trades chops whose chords agree, new hits use chops that fit the "
+                     "loop's key, and Dovetail holds the pinned chop's key harder. Drum-only chops can go anywhere.");
+    inKey.onClick = [this] { processor.setRandomFlags(randomBits()); pull(); };
+    content.addAndMakeVisible(inKey);
     undoButton.onClick = [this] { processor.undo(); pull(); };
 
     // Step inspector
@@ -1125,13 +1159,23 @@ void EpsilonChopEditor::pull()
     content.repaint(0, designHeight - 34, designWidth, 34);
 }
 
+int EpsilonChopEditor::randomBits() const
+{
+    int bits = 0;
+    for (int b = 0; b < 6; ++b)
+        if (flags[static_cast<std::size_t>(b)].getToggleState()) bits |= 1 << b;
+    if (inKey.getToggleState())
+        bits |= chop::randomInKey;
+    return bits;
+}
+
 void EpsilonChopEditor::syncControls()
 {
     const auto& edit = view.session.edit;
     const auto hasSample = view.session.sample != nullptr;
     mode.setSelected(static_cast<int>(edit.mode));
 
-    if (edit.mode == chop::SliceMode::transient)
+    if (edit.mode == chop::SliceMode::transient || edit.mode == chop::SliceMode::harmonic)
         density.setOptions({ "8", "16", "32" }, { 8, 16, 32 });
     else
         density.setOptions({ "4", "8", "16", "32" }, { 4, 8, 16, 32 });
@@ -1157,18 +1201,22 @@ void EpsilonChopEditor::syncControls()
 
     for (int b = 0; b < 6; ++b)
         flags[static_cast<std::size_t>(b)].setToggleState((edit.randomFlags & (1 << b)) != 0, juce::dontSendNotification);
+    inKey.setToggleState((edit.randomFlags & chop::randomInKey) != 0, juce::dontSendNotification);
+    inKey.setEnabled(hasSample);
     if (!chaos.slider.isMouseButtonDown())
         chaos.slider.setValue(edit.chaos, juce::dontSendNotification);
     if (!fitKnob.slider.isMouseButtonDown())
         fitKnob.slider.setValue(edit.fitAmount, juce::dontSendNotification);
     const auto anchor = edit.anchor[static_cast<std::size_t>(edit.bank)];
     const auto dovetail = anchor >= 0 && pattern()[static_cast<std::size_t>(anchor)].slice >= 0 && edit.fitAmount > 0;
-    dice.setEnabled(hasSample && edit.randomFlags != 0);
+    dice.setEnabled(hasSample && (edit.randomFlags & chop::randomAll) != 0);
     static const std::array<const char*, 6> flagWords { "Swap", "Rhythm", "Stutter", "Reverse", "Pitch", "Gate" };
     juce::StringArray active;
     for (int b = 0; b < 6; ++b)
         if ((edit.randomFlags & (1 << b)) != 0)
             active.add(flagWords[static_cast<std::size_t>(b)]);
+    if ((edit.randomFlags & chop::randomInKey) != 0 && !active.isEmpty())
+        active.add("In key");
     dice.setSubtitle(!hasSample ? "Load a sample first"
                      : (dovetail ? juce::String::fromUTF8("Dovetail · step ") + twoDigits(anchor + 1)
                                  : (active.isEmpty() ? "Pick what to change below" : active.joinIntoString(juce::String::fromUTF8("  ·  ")))));
@@ -1218,12 +1266,13 @@ bool EpsilonChopEditor::shouldDropFilesWhenDraggedExternally(const juce::DragAnd
 void EpsilonChopEditor::layoutContext()
 {
     const auto m = view.session.edit.mode;
-    const auto showDensity = m == chop::SliceMode::transient || m == chop::SliceMode::grid || m == chop::SliceMode::random;
-    sensitivity.setVisible(m == chop::SliceMode::transient);
+    const auto cutsOnHits = m == chop::SliceMode::transient || m == chop::SliceMode::harmonic;
+    const auto showDensity = cutsOnHits || m == chop::SliceMode::grid || m == chop::SliceMode::random;
+    sensitivity.setVisible(cutsOnHits);
     density.setVisible(showDensity);
     division.setVisible(m == chop::SliceMode::beat);
     rechop.setVisible(m == chop::SliceMode::random);
-    if (m == chop::SliceMode::transient)
+    if (cutsOnHits)
         density.setBounds(768, 90, 96, 28);
     else
         density.setBounds(548, 90, 168, 28);
@@ -1265,7 +1314,8 @@ void EpsilonChopEditor::resized()
     fitKnob.setBounds(656, 570, 88, 86);
     for (int i = 0; i < 6; ++i)
         flags[static_cast<std::size_t>(i)].setBounds(408 + i * 56, 654, 52, 24);
-    undoButton.setBounds(408, 686, 64, 20);
+    undoButton.setBounds(408, 686, 52, 20);
+    inKey.setBounds(464, 686, 62, 20);
 
     previousChop.setBounds(1018, 574, 28, 26);
     nextChop.setBounds(1054, 574, 28, 26);
@@ -1321,7 +1371,9 @@ void EpsilonChopEditor::paintHeader(juce::Graphics& g)
         const auto info = juce::String(sample->length() / sample->sampleRate, 2) + juce::String::fromUTF8(" s   ·   ")
                           + juce::String(sample->sampleRate / 1000.0, 1) + juce::String::fromUTF8(" kHz   ·   ")
                           + (sample->channels == 2 ? "STEREO" : "MONO") + juce::String::fromUTF8("   ·   ")
-                          + juce::String(view.session.slices.count) + " CHOPS";
+                          + juce::String(view.session.slices.count) + " CHOPS"
+                          + (sample->key != chop::noChord ? juce::String::fromUTF8("   ·   KEY ") + juce::String(chop::keyName(sample->key)).toUpperCase()
+                                                          : juce::String());
         g.setFont(sans(11.0f, true));
         const auto infoWidth = juce::GlyphArrangement::getStringWidthInt(sans(11.0f, true), info);
         g.setColour(dim);
@@ -1346,7 +1398,7 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
 
     // Context captions in the chop bar
     const auto m = view.session.edit.mode;
-    if (m == chop::SliceMode::transient)
+    if (m == chop::SliceMode::transient || m == chop::SliceMode::harmonic)
     {
         caption(g, "SENSITIVITY", { 484, 90, 92, 28 });
         g.setColour(text);
@@ -1389,10 +1441,10 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     {
         g.setColour(text);
         g.setFont(mono(10.5f));
-        g.drawFittedText(view.lastRoll, 480, 686, 266, 20, juce::Justification::centredLeft, 1, 0.75f);
+        g.drawFittedText(view.lastRoll, 534, 686, 212, 20, juce::Justification::centredLeft, 1, 0.7f);
     }
     else
-        g.drawText("Every roll can be undone", 480, 686, 240, 20, juce::Justification::centredLeft);
+        g.drawText("Every roll can be undone", 534, 686, 212, 20, juce::Justification::centredLeft);
 
     // Step inspector header
     const auto& step = pattern()[static_cast<std::size_t>(selectedStep)];
@@ -1409,7 +1461,11 @@ void EpsilonChopEditor::paintPanels(juce::Graphics& g)
     g.fillRoundedRectangle(chip, 8.0f);
     g.setColour(shown >= 0 ? ink0 : faint);
     g.setFont(sans(11.5f, true));
-    g.drawText(shown >= 0 ? "CHOP " + twoDigits(shown + 1) : "REST", chip, juce::Justification::centred);
+    auto chipText = shown >= 0 ? "CHOP " + twoDigits(shown + 1) : juce::String("REST");
+    bool singleNote = false;
+    if (const auto chord = chordOf(view.session, shown, &singleNote); chord.isNotEmpty())
+        chipText << juce::String::fromUTF8("  \u00b7  ") << chord << (singleNote ? " note" : "");
+    g.drawFittedText(chipText, chip.toNearestInt(), juce::Justification::centred, 1, 0.8f);
     caption(g, "RATCHET", { 936, 612, 80, 14 });
 }
 

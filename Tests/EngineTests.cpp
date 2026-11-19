@@ -759,6 +759,235 @@ void masterPitch()
     }
 }
 
+// ---- harmony ---------------------------------------------------------------
+
+// A loop of chords, one per `chordSeconds`, played as rich tones with a bass note, under
+// a drum hit on every quarter of a second (noise burst + kick), so cuts on hits alone
+// can't find the chords.
+std::shared_ptr<chop::Sample> makeChordLoop(const std::vector<std::array<int, 4>>& chords, double chordSeconds,
+                                            double sr = 44100.0, bool drums = true)
+{
+    auto sample = std::make_shared<chop::Sample>();
+    sample->sampleRate = sr;
+    sample->channels = 2;
+    const auto frames = static_cast<int>(sr * chordSeconds * chords.size());
+    for (auto& channel : sample->pcm)
+        channel.assign(static_cast<std::size_t>(frames), 0.0f);
+    std::uint32_t noise = 12345u;
+    for (int i = 0; i < frames; ++i)
+    {
+        const auto t = i / sr;
+        const auto& chord = chords[static_cast<std::size_t>(std::min<double>(chords.size() - 1, std::floor(t / chordSeconds)))];
+        double v = 0.0;
+        for (int n = 0; n < 4; ++n)
+        {
+            const auto f = 440.0 * std::pow(2.0, (chord[static_cast<std::size_t>(n)] - 69) / 12.0);
+            for (int h = 1; h <= 5; ++h)
+                v += (n == 0 ? 0.16 : 0.09) / h * std::sin(2.0 * 3.14159265358979 * f * h * t);
+        }
+        if (drums)
+        {
+            const auto age = std::fmod(t, 0.25);
+            noise = noise * 1664525u + 1013904223u;
+            const auto white = (static_cast<double>(noise >> 8) / 16777216.0) * 2.0 - 1.0;
+            v += 0.35 * std::exp(-60.0 * age) * white + 0.5 * std::exp(-18.0 * age) * std::sin(2.0 * 3.14159265358979 * 55.0 * age);
+        }
+        for (auto& channel : sample->pcm)
+            channel[static_cast<std::size_t>(i)] = static_cast<float>(0.5 * v);
+    }
+    // Onsets on every drum hit, as the transient analysis would find them.
+    for (int hit = 1; hit * 0.25 * sr < frames; ++hit)
+        sample->onsets.push_back({ static_cast<int>(hit * 0.25 * sr), 1.0f });
+    sample->strongest = 1.0f;
+    sample->estimatedBpm = chop::estimateLoopBpm(frames, sr);
+    chop::analyzeHarmony(*sample);
+    return sample;
+}
+
+void harmony()
+{
+    // C - Am - F - G (bass, then three chord tones)
+    const std::vector<std::array<int, 4>> progression { { { 36, 60, 64, 67 } }, { { 45, 57, 60, 64 } },
+                                                        { { 41, 60, 65, 69 } }, { { 43, 59, 62, 67 } } };
+    for (const auto sr : { 44100.0, 48000.0 })
+    {
+        const auto sample = makeChordLoop(progression, 1.0, sr);
+        require(chop::keyName(sample->key) == "C major", "key of C-Am-F-G is C major (got " + chop::keyName(sample->key) + ")");
+
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        edit.density = 16;
+        edit.sensitivity = 60;
+        const auto slices = chop::makeSlices(*sample, edit);
+        require(slices.count == 4, "CHORD mode cuts the four chords into four chops (got " + std::to_string(slices.count) + ")");
+        if (slices.count == 4)
+            for (int s = 1; s < 4; ++s)
+                require(std::abs(slices.edge[static_cast<std::size_t>(s)] - static_cast<int>(s * sr)) < static_cast<int>(sr * 0.01),
+                        "each chord cut lands on the hit where the chord changes");
+
+        const auto table = chop::buildFitTable(*sample, slices);
+        const std::array<const char*, 4> names { "C", "Am", "F", "G" };
+        for (int s = 0; s < std::min(4, slices.count); ++s)
+            require(chop::chordName(table->chop[static_cast<std::size_t>(s)].chord) == names[static_cast<std::size_t>(s)],
+                    std::string("chop ") + std::to_string(s + 1) + " is labelled " + names[static_cast<std::size_t>(s)]
+                    + " (got '" + chop::chordName(table->chop[static_cast<std::size_t>(s)].chord) + "')");
+
+        // TRANSIENT mode cuts on every hit instead, but the labels still follow the chords.
+        edit.mode = chop::SliceMode::transient;
+        edit.sensitivity = 100;
+        const auto hits = chop::makeSlices(*sample, edit);
+        require(hits.count == 16, "TRANSIENT cuts every hit (got " + std::to_string(hits.count) + ")");
+        const auto hitTable = chop::buildFitTable(*sample, hits);
+        int agree = 0;
+        for (int s = 0; s < hits.count; ++s)
+            agree += chop::chordName(hitTable->chop[static_cast<std::size_t>(s)].chord) == names[static_cast<std::size_t>(std::min(3, s / 4))] ? 1 : 0;
+        require(agree >= 13, "short chops still get the right chord label (" + std::to_string(agree) + "/16)");
+    }
+
+    // A minor loop (Am - F - C - G) reads as A minor, and fast changes (every half second) still cut.
+    {
+        const auto sample = makeChordLoop({ { { 45, 57, 60, 64 } }, { { 41, 60, 65, 69 } }, { { 36, 60, 64, 67 } }, { { 43, 59, 62, 67 } },
+                                            { { 45, 57, 60, 64 } }, { { 41, 60, 65, 69 } }, { { 36, 60, 64, 67 } }, { { 43, 59, 62, 67 } } }, 0.5);
+        require(chop::keyName(sample->key) == "A minor", "Am-F-C-G is A minor (got " + chop::keyName(sample->key) + ")");
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        const auto slices = chop::makeSlices(*sample, edit);
+        require(slices.count == 8, "half-second chords cut into eight chops (got " + std::to_string(slices.count) + ")");
+    }
+
+    // Lower sensitivity keeps only the bigger moves.
+    {
+        // C - C/E (only the bass moves) - F - F
+        const std::vector<std::array<int, 4>> subtle { { { 36, 60, 64, 67 } }, { { 40, 60, 64, 67 } },
+                                                       { { 41, 60, 65, 69 } }, { { 41, 60, 65, 69 } } };
+        const auto sample = makeChordLoop(subtle, 1.0);
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        edit.sensitivity = 100;
+        const auto all = chop::makeSlices(*sample, edit).count;
+        edit.sensitivity = 0;
+        const auto few = chop::makeSlices(*sample, edit).count;
+        require(all >= few && few >= 2 && few <= 3, "sensitivity chooses how subtle a change cuts (" + std::to_string(all) + " vs " + std::to_string(few) + ")");
+        require(all <= 3, "the repeated F chord is not cut in two");
+    }
+
+    // A loop on one chord, and a drum loop, have nothing to cut on: one chop, no label.
+    {
+        const auto held = makeChordLoop({ { { 36, 60, 64, 67 } }, { { 36, 60, 64, 67 } } }, 1.0);
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        require(chop::makeSlices(*held, edit).count == 1, "one held chord stays one chop");
+        require(held->changes.size() <= 1, "no chord changes in a held chord");
+
+        auto drums = makeSample();
+        chop::analyzeHarmony(*drums);
+        const auto slices = chop::makeSlices(*drums, edit);
+        require(chop::validSlices(slices, drums->length()), "CHORD mode on a drum loop still makes valid chops");
+        auto noise = makeChordLoop({ { { 36, 60, 64, 67 } } }, 1.0, 44100.0, true);
+        for (auto& channel : noise->pcm)
+        {
+            std::uint32_t n = 99u;
+            for (auto& v : channel) { n = n * 1664525u + 1013904223u; v = 0.3f * ((static_cast<float>(n >> 8) / 16777216.0f) * 2.0f - 1.0f); }
+        }
+        chop::analyzeHarmony(*noise);
+        const auto noiseTable = chop::buildFitTable(*noise, chop::equalSlices(noise->length(), 4));
+        int labelled = 0;
+        for (int s = 0; s < 4; ++s)
+            labelled += noiseTable->chop[static_cast<std::size_t>(s)].chord != chop::noChord ? 1 : 0;
+        require(labelled == 0, "white noise gets no chord label");
+    }
+
+    // Short, silent and odd-rate samples never break the analysis.
+    {
+        chop::Sample tiny;
+        tiny.sampleRate = 8000.0;
+        tiny.channels = 1;
+        tiny.pcm[0].assign(100, 0.0f);
+        require(chop::analyzeHarmony(tiny) && tiny.changes.empty(), "a tiny sample analyses to nothing");
+        chop::Sample silent;
+        silent.sampleRate = 96000.0;
+        silent.channels = 2;
+        silent.pcm[0].assign(96000 * 2, 0.0f);
+        silent.pcm[1].assign(96000 * 2, 0.0f);
+        require(chop::analyzeHarmony(silent) && silent.changes.empty() && silent.key == chop::noChord, "silence has no key and no changes");
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        require(chop::validSlices(chop::makeSlices(silent, edit), silent.length()), "CHORD mode on silence makes valid chops");
+    }
+
+    // IN KEY: swaps only trade chops that agree. C, C, Am, Am, F#, F# - the F# chops are
+    // out of C, so with IN KEY a C chop never swaps with one of them.
+    {
+        const auto sample = makeChordLoop({ { { 36, 60, 64, 67 } }, { { 36, 60, 64, 67 } }, { { 45, 57, 60, 64 } },
+                                            { { 45, 57, 60, 64 } }, { { 42, 61, 66, 70 } }, { { 42, 61, 66, 70 } } }, 1.0);
+        const auto slices = chop::equalSlices(sample->length(), 6);
+        const auto table = chop::buildFitTable(*sample, slices);
+        require(chop::harmonicMatch(*table, 0, 1) > chop::harmonicMatch(*table, 0, 4), "C matches C better than F#");
+        chop::FitContext fit;
+        fit.table = table.get();
+        int outOfKey = 0, outOfKeyFree = 0;
+        for (std::uint32_t trial = 0; trial < 200; ++trial)
+        {
+            chop::Pattern pattern {};
+            pattern[0].slice = 0;
+            pattern[4].slice = 2;
+            pattern[8].slice = 0;
+            pattern[12].slice = 2;
+            for (const auto inKey : { true, false })
+            {
+                auto p = pattern;
+                auto seed = 0x1234u + trial * 7919u;
+                std::vector<chop::Swap> swaps;
+                chop::randomizePattern(p, 6, chop::randomChops | (inKey ? chop::randomInKey : 0), 40, seed, &swaps, nullptr, &fit);
+                for (const auto& [a, b] : swaps)
+                    if ((a < 4) != (b < 4))
+                        ++(inKey ? outOfKey : outOfKeyFree);
+            }
+        }
+        require(outOfKey == 0, "IN KEY never swaps a C or Am chop with an F# one (" + std::to_string(outOfKey) + ")");
+        require(outOfKeyFree > 20, "without IN KEY those swaps do happen");
+
+        // Full shuffle with IN KEY reports real swaps and keeps the key apart too.
+        chop::Pattern p = chop::inOrder(6);
+        auto seed = 77u;
+        std::vector<chop::Swap> swaps;
+        bool full = false;
+        require(chop::randomizePattern(p, 6, chop::randomChops | chop::randomInKey, 100, seed, &swaps, &full, &fit), "an IN KEY shuffle changes the bank");
+        for (const auto& [a, b] : swaps)
+            require((a < 4) == (b < 4), "an IN KEY shuffle stays in key");
+
+        // IN KEY on its own changes nothing (it is a modifier).
+        chop::Pattern q = chop::inOrder(6);
+        auto seed2 = 5u;
+        require(!chop::randomizePattern(q, 6, chop::randomInKey, 50, seed2, nullptr, nullptr, &fit), "IN KEY alone does nothing");
+    }
+
+    // A single note with rich overtones (an 808 or a tuned kick) is a note, not a major chord.
+    {
+        auto sample = std::make_shared<chop::Sample>();
+        sample->sampleRate = 44100.0;
+        sample->channels = 1;
+        const auto frames = 44100;
+        sample->pcm[0].resize(frames);
+        const auto f = 440.0 * std::pow(2.0, (44 - 69) / 12.0);   // Ab2
+        for (int i = 0; i < frames; ++i)
+        {
+            const auto t = i / 44100.0;
+            double v = 0.0;
+            for (int h = 1; h <= 8; ++h)
+                v += 0.3 / h * std::sin(2.0 * 3.14159265358979 * f * h * t);
+            sample->pcm[0][static_cast<std::size_t>(i)] = static_cast<float>(v * std::exp(-2.0 * t));
+        }
+        chop::analyzeHarmony(*sample);
+        const auto table = chop::buildFitTable(*sample, chop::equalSlices(frames, 1));
+        require(chop::isNote(table->chop[0].chord) && chop::chordName(table->chop[0].chord) == "Ab",
+                "one Ab note is labelled as the note Ab, not a chord (got '" + chop::chordName(table->chop[0].chord) + "')");
+    }
+
+    require(chop::chordName(19) == "Am" && chop::chordName(0) == "C" && chop::chordName(chop::noChord).empty(), "chord names");
+    require(chop::keyName(19) == "A minor" && chop::keyName(14) == "G major", "key names");
+}
+
 int main()
 {
     slicingModes();
@@ -772,6 +1001,7 @@ int main()
     dovetail();
     randomizerFixes();
     masterPitch();
+    harmony();
     if (failures == 0)
         std::cout << "Engine tests passed\n";
     return failures == 0 ? 0 : 1;

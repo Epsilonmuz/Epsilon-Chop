@@ -1,4 +1,4 @@
-# Epsilon Chop v0.5.0 · User Manual
+# Epsilon Chop v0.6.0 · User Manual
 
 **Epsilon Sounds · Sample chopper instrument · VST3 / AU / Standalone**
 
@@ -59,12 +59,25 @@ Loading never interrupts audio. Decoding and analysis run on a background thread
 | Mode | Best for | How it cuts | Context control |
 | --- | --- | --- | --- |
 | **TRANSIENT** | Drums, vocals, plucks, anything with clear attacks | Cuts just before each detected hit | **SENSITIVITY** (0–100) and **MAX** (8 / 16 / 32 chops) |
+| **CHORD** | Sampled music: keys, guitars, soul and orchestral loops | Cuts wherever the **chord or bass note changes**, even where there is no drum hit, then pulls each cut onto the nearest hit so the chop starts clean | **SENSITIVITY** (0–100) and **MAX** (8 / 16 / 32 chops) |
 | **BEAT** | Loops in time | Cuts on musical divisions of the loop's tempo, nudged onto nearby hits | **DIVISION** (1/4, 1/8, 1/16) |
 | **GRID** | Clean loops, pads, quick even chops | Equal-length chops | **CHOPS** (4 / 8 / 16 / 32) |
 | **RANDOM** | Happy accidents | Random cut points | **CHOPS** (4 / 8 / 16 / 32) and **RE-CHOP** |
 | **MANUAL** | Precise edits | Your own cut points | Edit directly on the waveform |
 
 **SENSITIVITY** sets how strong a hit must be to become a cut. Higher finds quieter attacks. **MAX** caps the count, and when there are more candidates than MAX allows, the strongest hits win. If a sample has no detectable attacks, Transient falls back to an even grid.
+
+**CHORD** mode (new in v0.6.0) listens to the harmony instead of the drums. A loop that goes C – Am – F – G gets four chops, one per chord, even if a hi-hat plays on every sixteenth. SENSITIVITY here sets how small a harmony move still counts: high SENSITIVITY also cuts when only the bass note moves (C to C/E), low SENSITIVITY keeps only the big chord changes. A chord that repeats (F then F) is not cut in two. A loop that stays on one chord, or a drum loop, has nothing to cut on and stays one whole chop: switch to TRANSIENT or BEAT for those.
+
+### Chord and note labels
+
+In **every** mode, each chop on the waveform is labelled with what it plays, next to its number and computer key:
+
+- **Filled tag, e.g. `Am`**: a chord (major or minor: `C`, `F#m`, `Bb` …).
+- **Outlined tag, e.g. `Ab`**: a single note, such as an 808, a tuned kick or a bass hit. The STEP chip reads `CHOP 03 · Ab note`.
+- **No tag**: drums, noise or anything without a clear pitch.
+
+The header shows the loop's **key** (e.g. `KEY C MAJOR`). On iPhone, the chord sits in the corner of each pad and the key is next to the sample name.
 
 **DIVISION** in Beat mode is relative to **LOOP BPM**. 1/8 at 120 BPM gives one chop every 250 ms. If a division would give more than 32 chops, it is doubled until the count fits. Each cut moves onto a nearby hit if there is one, within 20% of a division or 40 ms, whichever is smaller.
 
@@ -175,6 +188,17 @@ Sets how big each roll is. 0% makes the smallest possible change, which acts lik
 | **REVERSE** | Plays some chops backwards. | Each hit has a CHAOS × 30% chance. Other hits are set to forward. |
 | **PITCH** | Shifts some hits by musical intervals: −12, −7, −5, +5, +7 or +12 semitones. | Each hit has a CHAOS × 30% chance. Other hits are reset to 0. |
 | **GATE** | Changes hit lengths to 25, 40, 60, 80 or 100%. | Each hit has a CHAOS chance. |
+
+### IN KEY (next to UNDO)
+
+**IN KEY** keeps rolls musical. It is a modifier, so it changes nothing on its own; turn it on together with the toggles above.
+
+- **SWAP** only trades chops whose harmony agrees: the best-matching third of the candidates, and only real matches when there are any. A C chop can swap with another C or an Am, but not with an out-of-key F#. Drum-only chops have no harmony and can swap with anything.
+- At **95% CHAOS and above**, the full shuffle still happens, but as matched pairs, and the readout lists them.
+- New hits (an empty bank, or RHYTHM adding a hit) use chops that fit the loop's key.
+- With a pinned step, **DOVETAIL** holds the pinned chop's key three times harder.
+
+IN KEY is saved with your project. The RANDOMIZE subtitle adds `In key` when it's on.
 
 Notes:
 
@@ -374,11 +398,19 @@ Chop settings, patterns and randomizer settings are saved with the project, but 
    - **Peak picking:** a frame is a candidate when it is a local maximum and exceeds 1.25 × the mean of the surrounding ±10 frames plus a small floor.
    - **Attack refinement:** each candidate is moved to where the waveform first reaches 15% of its local peak, then 1 ms earlier, so the chop includes the very start of the attack.
    - **Limits:** candidates closer than 35 ms to a stronger one, or within 10 ms of either end of the file, are dropped. Up to 256 are kept *with their strengths*.
-4. **Loop tempo.** The length is assumed to be a power-of-two number of 4/4 beats (1, 2, 4 … 256). The estimate is the one that lands in **80–160 BPM**. A 4-second file reads as 120 BPM (8 beats), and an 8-beat loop at 92 BPM reads as 92.
+4. **Harmony (v0.6.0).** The mono mix is low-passed (4th-order, 4.8 kHz) and downsampled to about 11 kHz, then:
+   - **Chromagram:** ~186 ms Hann windows hopping ~46 ms. Only spectral *peaks* between 50 Hz and 5 kHz count (tones make peaks, drums mostly don't), each weighted by how in tune it is, and folded into 12 pitch classes. A second chroma keeps only the bass register (below 260 Hz).
+   - **Which frames vote:** frames more than 45 dB under the loudest are ignored, and flat (noisy) frames count less.
+   - **Chord changes:** at every frame, the harmony of the next ~0.25 s is compared with the previous ~0.25 s (70% chord shape, 30% bass). Peaks in that difference, at least 0.2 s apart and clearly above their surroundings, are the change points, saved with their strength.
+   - **Key:** everything the loop plays is matched against the 24 Krumhansl–Kessler major and minor key profiles. A major key and its relative minor (C major and A minor) share the same notes, so the chord the loop rests on most decides, and the first chord breaks a tie.
+   - **Chord per chop:** the chop's average chroma is matched against all 24 major and minor triads, with the bass note deciding between relatives. If the third is much quieter than a played note would be, it's an overtone, so the chop is labelled as a **single note** rather than a major chord.
+   - Analysing a 2-minute sample takes about a third of a second. It runs again when a project reopens (it isn't stored), so old projects get labels too.
+5. **Loop tempo.** The length is assumed to be a power-of-two number of 4/4 beats (1, 2, 4 … 256). The estimate is the one that lands in **80–160 BPM**. A 4-second file reads as 120 BPM (8 beats), and an 8-beat loop at 92 BPM reads as 92.
 
 ### How each mode picks cuts (instant, no re-analysis)
 
 - **Transient:** keeps onsets with strength ≥ strongest × (0.6 × (1 − sensitivity/100)² + 0.004). If more than MAX − 1 remain, the strongest win. This is why the SENSITIVITY slider responds instantly.
+- **Chord:** keeps change points with strength ≥ strongest × (0.75 × (1 − sensitivity/100)² + 0.05); if more than MAX − 1 remain, the strongest win. Each cut moves onto the nearest detected hit within 120 ms, otherwise it stays where the harmony moved. No change points = one whole chop.
 - **Beat:** described in [Chop modes](#chop-modes).
 - **Random:** a seeded generator places cuts with a minimum spacing of the length ÷ (4 × count).
 - In every automatic mode, chops are at least min(25 ms, length/64) long. ZERO-X then snaps each cut to a sign change in the mono sum within ±2 ms.

@@ -24,8 +24,9 @@ constexpr double maxHitSeconds = 0.030;     // Hit Align looks this far past a c
 constexpr double maxLeadSeconds = 0.060;    // and never starts a chop more than this early
 
 // Numeric values 0-2 are kept from v0.1.0 so saved sessions keep their mode.
-enum class SliceMode : int { grid = 0, transient = 1, manual = 2, beat = 3, random = 4 };
-constexpr int sliceModeCount = 5;
+// CHORD (harmonic) cuts where the harmony moves: a new chord or bass note, even with no drum hit.
+enum class SliceMode : int { grid = 0, transient = 1, manual = 2, beat = 3, random = 4, harmonic = 5 };
+constexpr int sliceModeCount = 6;
 enum class VoiceOrigin : int { midi, pattern, preview, keys };
 
 // How hits end. CUT works like FL Studio's "Cut by 1" on every pad: each hit cuts
@@ -54,12 +55,25 @@ enum RandomFlag : int
     randomReverse = 1 << 3,
     randomPitch   = 1 << 4,
     randomGate    = 1 << 5,
-    randomAll     = (1 << 6) - 1
+    randomAll     = (1 << 6) - 1,
+    // IN KEY is a modifier, not a change on its own: SWAP only trades chops whose harmony
+    // agrees, new hits use in-key chops, and Dovetail holds the pinned chop's key harder.
+    randomInKey   = 1 << 6,
+    randomFlagMask = randomAll | randomInKey
 };
 constexpr int defaultRandomFlags = randomChops | randomRhythm | randomStutter;
 
 struct Peak { float low = 0.0f, high = 0.0f; };
 struct Onset { int position = 0; float strength = 0.0f; };
+using Chroma = std::array<float, 12>;   // pitch classes, index 0 = C
+
+// Chords are numbered root * 2 + (minor ? 1 : 0), so 0 = C, 1 = Cm, 19 = Am. -1 = no clear chord.
+// A chop that plays one note (an 808, a tuned kick) is firstNote + pitch class: 24 = C ... 35 = B.
+constexpr int noChord = -1;
+constexpr int firstNote = 24;
+constexpr bool isNote(int code) noexcept { return code >= firstNote && code < firstNote + 12; }
+std::string chordName(int chord);       // "C", "F#m", the note name for a single note, "" for noChord
+std::string keyName(int key);           // "C major", "A minor", "" when unknown
 
 struct Sample
 {
@@ -71,6 +85,15 @@ struct Sample
     std::vector<Onset> onsets;          // sorted by position
     float strongest = 0.0f;
     double estimatedBpm = 120.0;
+
+    // Harmony (analyzeHarmony). One chroma frame every chromaHop frames, with a matching
+    // bass-register chroma, the points where the harmony changes, and the loop's key.
+    int chromaHop = 0;
+    std::vector<Chroma> chroma, bass;
+    std::vector<float> chromaLevel;     // dB per frame, so silence and noise don't vote
+    std::vector<Onset> changes;         // sorted by position, strength 0..1
+    float strongestChange = 0.0f;
+    int key = noChord;                  // same numbering as chords: 19 = A minor
 
     int length() const noexcept { return static_cast<int>(pcm[0].size()); }
 };
@@ -126,6 +149,9 @@ struct ChopPrint
     std::array<float, 12> headChroma {}, tailChroma {}, bodyChroma {};
     float headDb = -90.0f, tailDb = -90.0f;
     float headBright = 0.0f, tailBright = 0.0f;   // log2 of the spectral centroid
+    Chroma wholeChroma {};                        // the whole chop, from the sample's chromagram
+    int chord = noChord;                          // what the chop plays, for the labels
+    float keyFit = 0.0f;                          // 0..1, how well the chop sits in the loop's key
 };
 
 struct FitTable
@@ -134,6 +160,7 @@ struct FitTable
     std::array<ChopPrint, maxSlices> chop {};
     float chromaScale = 1.0f, driftScale = 1.0f, loudScale = 1.0f, brightScale = 1.0f;
     float loudBias = 0.0f, brightBias = 0.0f;   // the sample's own typical join
+    int key = noChord;
 };
 
 struct FitContext
@@ -142,6 +169,15 @@ struct FitContext
     int anchor = -1;    // pinned step
     int amount = 0;     // 0..100
 };
+
+// ---- harmony ---------------------------------------------------------------
+// Chromagram, chord-change points and key. Safe to call on any sample; fills the Sample's
+// harmony fields. Returns false only if `cancelled` asked it to stop.
+bool analyzeHarmony(Sample&, bool (*cancelled)(void*) = nullptr, void* context = nullptr);
+Chroma chromaBetween(const Sample&, int first, int last, Chroma* bassOut = nullptr) noexcept;
+int detectChord(const Chroma& chroma, const Chroma& bass, float* confidence = nullptr) noexcept;
+// 0..1: how much two chops agree harmonically (a chop with no clear harmony agrees with anything).
+float harmonicMatch(const FitTable&, int a, int b) noexcept;
 
 struct Session
 {
@@ -187,7 +223,7 @@ bool randomizePattern(Pattern&, int slices, int flags, int chaos, std::uint32_t&
 int hitCount(const Pattern&) noexcept;
 
 std::shared_ptr<FitTable> buildFitTable(const Sample&, const Slices&);
-float joinCost(const FitTable&, const Step& from, const Step& to, const Step* anchor) noexcept;
+float joinCost(const FitTable&, const Step& from, const Step& to, const Step* anchor, float keyWeight = 0.15f) noexcept;
 float joinQuality(const FitTable&, const Step& from, const Step& to, const Step* anchor) noexcept; // 0..1
 
 // ---- playback --------------------------------------------------------------

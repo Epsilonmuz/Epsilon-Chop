@@ -108,7 +108,7 @@ bool readEdit(juce::MemoryInputStream& input, chop::Edit& edit, int version)
     edit.bank = input.readInt();
     if (version >= 2)
     {
-        edit.randomFlags = input.readInt() & chop::randomAll;
+        edit.randomFlags = input.readInt() & chop::randomFlagMask;
         edit.chaos = input.readInt();
     }
     edit.manual.count = input.readInt();
@@ -338,7 +338,9 @@ bool readSample(juce::MemoryInputStream& input, std::shared_ptr<chop::Sample>& d
         analysed = onsets > 0;
     }
     if (!analysed)
-        chop::analyzeTransients(*sample, [] { return false; });
+        chop::analyzeTransients(*sample, [] { return false; });   // also finds the chords
+    else
+        chop::analyzeHarmony(*sample);
     destination = std::move(sample);
     return true;
 }
@@ -853,7 +855,7 @@ void EpsilonChopProcessor::setRandomFlags(int flags)
 {
     edit([flags](auto& state)
     {
-        const auto masked = flags & chop::randomAll;
+        const auto masked = flags & chop::randomFlagMask;
         if (state.edit.randomFlags == masked)
             return false;
         state.edit.randomFlags = masked;

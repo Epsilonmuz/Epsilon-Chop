@@ -257,11 +257,49 @@ Slices makeSlices(const Sample& sample, const Edit& edit) noexcept
             }
             break;
         }
+        case SliceMode::harmonic:
+        {
+            if (sample.changes.empty() || sample.strongestChange <= 0.0f)
+                break;
+            // Sensitivity works like TRANSIENT's: higher keeps the subtler harmony moves too.
+            const auto open = 1.0f - std::clamp(edit.sensitivity, 0, 100) / 100.0f;
+            const auto threshold = sample.strongestChange * (0.75f * open * open + 0.05f);
+            std::vector<Onset> chosen;
+            for (const auto& change : sample.changes)
+                if (change.strength >= threshold)
+                    chosen.push_back(change);
+            const auto limit = static_cast<std::size_t>(std::clamp(edit.density, 2, maxSlices) - 1);
+            if (chosen.size() > limit)
+            {
+                std::stable_sort(chosen.begin(), chosen.end(), [](auto& a, auto& b) { return a.strength > b.strength; });
+                chosen.resize(limit);
+            }
+            // A chord change almost always lands with a hit: pull the cut onto the nearest
+            // attack so the chop starts clean, otherwise keep where the harmony moved.
+            const auto window = static_cast<int>(sample.sampleRate * 0.12);
+            for (const auto& change : chosen)
+            {
+                int best = -1;
+                for (const auto& onset : sample.onsets)
+                    if (std::abs(onset.position - change.position) <= window && onset.strength >= sample.strongest * 0.05f
+                        && (best < 0 || std::abs(onset.position - change.position) < std::abs(best - change.position)))
+                        best = onset.position;
+                marks.push_back(best >= 0 ? best : change.position);
+            }
+            break;
+        }
         case SliceMode::grid:
         case SliceMode::manual:
             break;
     }
 
+    if (marks.empty() && edit.mode == SliceMode::harmonic)
+    {
+        // One chord all the way through: there is nothing to cut on, so it stays whole.
+        auto whole = equalSlices(frames, 1);
+        measureHits(sample, whole);
+        return whole;
+    }
     if (marks.empty() && edit.mode != SliceMode::random && edit.mode != SliceMode::beat)
     {
         const auto grid = equalSlices(frames, edit.mode == SliceMode::transient ? std::min(8, edit.density) : edit.density);
@@ -450,8 +488,6 @@ int hitCount(const Pattern& pattern) noexcept
 
 namespace
 {
-using Chroma = std::array<float, 12>;
-
 void fft(std::vector<std::complex<float>>& data) noexcept
 {
     const auto n = data.size();
@@ -572,6 +608,426 @@ JoinTerms rawJoin(const FitTable& table, const Step& from, const Step& to) noexc
 }
 }
 
+
+// ---- harmony ---------------------------------------------------------------
+
+namespace
+{
+// Krumhansl-Kessler key profiles, index 0 = tonic.
+constexpr std::array<float, 12> majorProfile { 6.35f, 2.23f, 3.48f, 2.33f, 4.38f, 4.09f, 2.52f, 5.19f, 2.39f, 3.66f, 2.29f, 2.88f };
+constexpr std::array<float, 12> minorProfile { 6.33f, 2.68f, 3.52f, 5.38f, 2.60f, 3.53f, 2.54f, 4.75f, 3.98f, 2.69f, 3.34f, 3.17f };
+constexpr std::array<const char*, 12> noteNames { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+
+float keyCorrelation(const Chroma& chroma, int key) noexcept
+{
+    const auto& profile = (key & 1) != 0 ? minorProfile : majorProfile;
+    const auto tonic = key / 2;
+    float meanC = 0.0f, meanP = 0.0f;
+    for (int k = 0; k < 12; ++k)
+    {
+        meanC += chroma[static_cast<std::size_t>(k)];
+        meanP += profile[static_cast<std::size_t>(k)];
+    }
+    meanC /= 12.0f;
+    meanP /= 12.0f;
+    float sxy = 0.0f, sxx = 0.0f, syy = 0.0f;
+    for (int k = 0; k < 12; ++k)
+    {
+        const auto x = chroma[static_cast<std::size_t>((tonic + k) % 12)] - meanC;
+        const auto y = profile[static_cast<std::size_t>(k)] - meanP;
+        sxy += x * y;
+        sxx += x * x;
+        syy += y * y;
+    }
+    return sxx > 1.0e-12f ? sxy / std::sqrt(sxx * syy) : 0.0f;
+}
+
+// Removes the flat part of a chroma frame (drums, noise) and keeps what stands out.
+Chroma whiten(Chroma chroma) noexcept
+{
+    auto mean = 0.0f;
+    for (const auto v : chroma) mean += v;
+    mean /= 12.0f;
+    for (auto& v : chroma) v = std::max(0.0f, v - 0.7f * mean);
+    normalise(chroma);
+    return chroma;
+}
+
+float tonality(const Chroma& chroma) noexcept
+{
+    auto mean = 0.0f, high = 0.0f;
+    for (const auto v : chroma) { mean += v; high = std::max(high, v); }
+    mean /= 12.0f;
+    return high > 1.0e-9f ? std::clamp((high - mean) / high, 0.0f, 1.0f) : 0.0f;
+}
+
+float cosine(const Chroma& a, const Chroma& b) noexcept
+{
+    float ab = 0.0f, aa = 0.0f, bb = 0.0f;
+    for (int k = 0; k < 12; ++k)
+    {
+        ab += a[static_cast<std::size_t>(k)] * b[static_cast<std::size_t>(k)];
+        aa += a[static_cast<std::size_t>(k)] * a[static_cast<std::size_t>(k)];
+        bb += b[static_cast<std::size_t>(k)] * b[static_cast<std::size_t>(k)];
+    }
+    return aa > 1.0e-12f && bb > 1.0e-12f ? std::clamp(ab / std::sqrt(aa * bb), 0.0f, 1.0f) : 0.0f;
+}
+}
+
+std::string chordName(int chord)
+{
+    if (isNote(chord))
+        return noteNames[static_cast<std::size_t>(chord - firstNote)];
+    if (chord < 0 || chord >= 24)
+        return {};
+    return std::string(noteNames[static_cast<std::size_t>(chord / 2)]) + ((chord & 1) != 0 ? "m" : "");
+}
+
+std::string keyName(int key)
+{
+    if (key < 0 || key >= 24)
+        return {};
+    return std::string(noteNames[static_cast<std::size_t>(key / 2)]) + ((key & 1) != 0 ? " minor" : " major");
+}
+
+bool analyzeHarmony(Sample& sample, bool (*cancelled)(void*), void* context)
+{
+    sample.chroma.clear();
+    sample.bass.clear();
+    sample.chromaLevel.clear();
+    sample.changes.clear();
+    sample.strongestChange = 0.0f;
+    sample.key = noChord;
+    sample.chromaHop = 0;
+    const auto frames = sample.length();
+    const auto rate = sample.sampleRate;
+    if (frames < static_cast<int>(rate * 0.2) || sample.channels < 1)
+        return true;
+
+    // Chords live below 5 kHz, so the analysis runs on a mono copy downsampled to about
+    // 11 kHz (4th-order low-pass first), which makes it several times faster.
+    const auto factor = std::clamp(static_cast<int>(rate / 11025.0), 1, 16);
+    const auto lowRate = rate / factor;
+    std::vector<float> x(static_cast<std::size_t>(frames / factor + 1));
+    {
+        const auto w0 = 2.0 * pi * std::min(4800.0, 0.43 * lowRate) / rate;
+        std::array<double, 2> q { 0.5411961, 1.3065630 };   // Butterworth sections
+        std::array<std::array<double, 5>, 2> coefficients {};
+        for (int k = 0; k < 2; ++k)
+        {
+            const auto alpha = std::sin(w0) / (2.0 * q[static_cast<std::size_t>(k)]), cw = std::cos(w0), a0 = 1.0 + alpha;
+            coefficients[static_cast<std::size_t>(k)] = { (1.0 - cw) / 2.0 / a0, (1.0 - cw) / a0, (1.0 - cw) / 2.0 / a0,
+                                                          -2.0 * cw / a0, (1.0 - alpha) / a0 };
+        }
+        std::array<std::array<double, 2>, 2> z {};
+        for (int i = 0; i < frames; ++i)
+        {
+            double v = mono(sample, i);
+            for (int k = 0; k < 2; ++k)
+            {
+                const auto& c = coefficients[static_cast<std::size_t>(k)];
+                auto& state = z[static_cast<std::size_t>(k)];
+                const auto out = c[0] * v + state[0];
+                state[0] = c[1] * v - c[3] * out + state[1];
+                state[1] = c[2] * v - c[4] * out;
+                v = out;
+            }
+            if (i % factor == 0)
+                x[static_cast<std::size_t>(i / factor)] = static_cast<float>(v);
+        }
+    }
+    const auto lowFrames = static_cast<int>(x.size());
+
+    // ~170-190 ms windows resolve semitones down to about 100 Hz; a quarter-window hop
+    // places a change to within ~45 ms (the cut is then pulled onto the nearest hit).
+    int size = 256;
+    while (size < lowRate * 0.15 && size < 8192)
+        size <<= 1;
+    const auto lowHop = size / 4;
+    const auto hop = lowHop * factor;                    // in the sample's own frames
+    const auto columns = lowFrames / lowHop + 1;
+    sample.chromaHop = hop;
+
+    const auto binHz = lowRate / size;
+    struct BinMap { int bin; int pitch; float weight; bool bass; };
+    std::vector<BinMap> map;
+    for (int bin = 1; bin < size / 2; ++bin)
+    {
+        const auto frequency = bin * binHz;
+        if (frequency < 50.0 || frequency > 5000.0)
+            continue;
+        const auto semitones = 12.0 * std::log2(frequency / 440.0) + 69.0;   // MIDI note number
+        const auto nearest = std::lround(semitones);
+        const auto off = semitones - static_cast<double>(nearest);
+        const auto weight = static_cast<float>(std::pow(std::cos(pi * off), 2.0));   // in-tune bins count most
+        map.push_back({ bin, static_cast<int>(((nearest % 12) + 12) % 12), weight, frequency <= 260.0 });
+    }
+
+    std::vector<std::complex<float>> work(static_cast<std::size_t>(size));
+    std::vector<float> window(static_cast<std::size_t>(size)), magnitudes(static_cast<std::size_t>(size / 2));
+    for (int i = 0; i < size; ++i)
+        window[static_cast<std::size_t>(i)] = 0.5f - 0.5f * static_cast<float>(std::cos(2.0 * pi * i / (size - 1)));
+
+    sample.chroma.resize(static_cast<std::size_t>(columns));
+    sample.bass.resize(static_cast<std::size_t>(columns));
+    sample.chromaLevel.resize(static_cast<std::size_t>(columns));
+    for (int column = 0; column < columns; ++column)
+    {
+        if (cancelled != nullptr && column % 32 == 0 && cancelled(context))
+            return false;
+        const auto start = column * lowHop - size / 2;
+        double energy = 0.0;
+        for (int i = 0; i < size; ++i)
+        {
+            const auto index = start + i;
+            const auto v = index >= 0 && index < lowFrames ? x[static_cast<std::size_t>(index)] : 0.0f;
+            energy += static_cast<double>(v) * v;
+            work[static_cast<std::size_t>(i)] = { v * window[static_cast<std::size_t>(i)], 0.0f };
+        }
+        const auto db = static_cast<float>(10.0 * std::log10(energy / size + 1.0e-12));
+        sample.chromaLevel[static_cast<std::size_t>(column)] = db;
+        Chroma chroma {}, bass {};
+        if (db > -75.0f)
+        {
+            fft(work);
+            for (int bin = 0; bin < size / 2; ++bin)
+                magnitudes[static_cast<std::size_t>(bin)] = std::abs(work[static_cast<std::size_t>(bin)]) * (2.0f / size);
+            for (const auto& m : map)
+            {
+                const auto v = magnitudes[static_cast<std::size_t>(m.bin)];
+                // Spectral peaks only: tones make peaks, drums and noise mostly don't.
+                if (m.bin + 1 >= size / 2 || v <= magnitudes[static_cast<std::size_t>(m.bin - 1)] || v < magnitudes[static_cast<std::size_t>(m.bin + 1)])
+                    continue;
+                const auto value = m.weight * std::sqrt(v);   // keeps level ratios (a chord tone vs an overtone)
+                chroma[static_cast<std::size_t>(m.pitch)] += value;
+                if (m.bass)
+                    bass[static_cast<std::size_t>(m.pitch)] += value;
+            }
+        }
+        sample.chroma[static_cast<std::size_t>(column)] = chroma;
+        sample.bass[static_cast<std::size_t>(column)] = bass;
+    }
+
+    // Which frames get a vote: not silent, and actually tonal.
+    const auto loudest = *std::max_element(sample.chromaLevel.begin(), sample.chromaLevel.end());
+    std::vector<float> vote(static_cast<std::size_t>(columns));
+    std::vector<Chroma> shape(static_cast<std::size_t>(columns)), low(static_cast<std::size_t>(columns));
+    Chroma total {};
+    for (int c = 0; c < columns; ++c)
+    {
+        const auto& raw = sample.chroma[static_cast<std::size_t>(c)];
+        const auto level = sample.chromaLevel[static_cast<std::size_t>(c)];
+        const auto audible = std::clamp((level - std::max(-70.0f, loudest - 45.0f)) / 12.0f, 0.0f, 1.0f);
+        shape[static_cast<std::size_t>(c)] = whiten(raw);
+        low[static_cast<std::size_t>(c)] = whiten(sample.bass[static_cast<std::size_t>(c)]);
+        vote[static_cast<std::size_t>(c)] = audible * tonality(raw);
+        for (int k = 0; k < 12; ++k)
+            total[static_cast<std::size_t>(k)] += vote[static_cast<std::size_t>(c)]
+                * (shape[static_cast<std::size_t>(c)][static_cast<std::size_t>(k)] + 0.5f * low[static_cast<std::size_t>(c)][static_cast<std::size_t>(k)]);
+    }
+
+    // Key: the profile that best matches everything the loop plays.
+    auto bestKey = noChord;
+    auto bestScore = 0.25f;
+    for (int key = 0; key < 24; ++key)
+        if (const auto score = keyCorrelation(total, key); score > bestScore)
+        {
+            bestScore = score;
+            bestKey = key;
+        }
+    // A major key and its relative minor share every note, so the profiles alone often
+    // can't tell them apart. The chord the loop rests on most settles it (the first chord
+    // counts double and breaks a tie: loops usually start on home).
+    if (bestKey != noChord)
+    {
+        const auto relative = (bestKey & 1) != 0 ? (((bestKey / 2) + 3) % 12) * 2 : (((bestKey / 2) + 9) % 12) * 2 + 1;
+        if (keyCorrelation(total, relative) > bestScore - 0.12f)
+        {
+            double home = 0.0, other = 0.0;
+            const auto block = std::max(1, static_cast<int>(std::lround(0.25 * rate / hop)));
+            bool first = true;
+            int firstChord = noChord;
+            for (int c = 0; c < columns; c += block)
+            {
+                Chroma chunk {}, chunkBass {};
+                for (int k = c; k < std::min(columns, c + block); ++k)
+                    for (int p = 0; p < 12; ++p)
+                    {
+                        chunk[static_cast<std::size_t>(p)] += vote[static_cast<std::size_t>(k)] * sample.chroma[static_cast<std::size_t>(k)][static_cast<std::size_t>(p)];
+                        chunkBass[static_cast<std::size_t>(p)] += vote[static_cast<std::size_t>(k)] * sample.bass[static_cast<std::size_t>(k)][static_cast<std::size_t>(p)];
+                    }
+                normalise(chunk);
+                normalise(chunkBass);
+                const auto chord = detectChord(chunk, chunkBass);
+                if (chord == noChord)
+                    continue;
+                const auto weight = first ? 2.0 : 1.0;
+                if (first) firstChord = chord;
+                first = false;
+                if (chord == bestKey) home += weight;
+                else if (chord == relative) other += weight;
+            }
+            if (other > home || (std::abs(other - home) < 0.5 && firstChord == relative))
+                bestKey = relative;
+        }
+    }
+    sample.key = bestKey;
+
+    // Novelty: how different the harmony ~0.25 s after each point is from ~0.25 s before it.
+    const auto span = std::max(3, static_cast<int>(std::lround(0.25 * rate / hop)));
+    std::vector<float> novelty(static_cast<std::size_t>(columns));
+    for (int c = span; c + span <= columns; ++c)
+    {
+        Chroma before {}, after {}, bassBefore {}, bassAfter {};
+        float wb = 0.0f, wa = 0.0f;
+        for (int k = 0; k < span; ++k)
+        {
+            const auto b = static_cast<std::size_t>(c - 1 - k), a = static_cast<std::size_t>(c + k);
+            for (int p = 0; p < 12; ++p)
+            {
+                before[static_cast<std::size_t>(p)] += vote[b] * shape[b][static_cast<std::size_t>(p)];
+                after[static_cast<std::size_t>(p)] += vote[a] * shape[a][static_cast<std::size_t>(p)];
+                bassBefore[static_cast<std::size_t>(p)] += vote[b] * low[b][static_cast<std::size_t>(p)];
+                bassAfter[static_cast<std::size_t>(p)] += vote[a] * low[a][static_cast<std::size_t>(p)];
+            }
+            wb += vote[b];
+            wa += vote[a];
+        }
+        if (wb < 0.25f * span * 0.3f || wa < 0.25f * span * 0.3f)
+            continue;
+        const auto harmony = 1.0f - cosine(before, after);
+        const auto bassMove = 1.0f - cosine(bassBefore, bassAfter);
+        novelty[static_cast<std::size_t>(c)] = 0.7f * harmony + 0.3f * bassMove;
+    }
+
+    const auto separation = std::max(2, static_cast<int>(std::lround(0.20 * rate / hop)));
+    std::vector<Onset> peaks;
+    for (int c = 1; c + 1 < columns; ++c)
+    {
+        const auto v = novelty[static_cast<std::size_t>(c)];
+        if (v < 0.06f)
+            continue;
+        bool isPeak = true;
+        double mean = 0.0;
+        int counted = 0;
+        for (int k = std::max(0, c - 2 * span); k < std::min(columns, c + 2 * span + 1); ++k)
+        {
+            if (k != c && std::abs(k - c) <= separation && novelty[static_cast<std::size_t>(k)] > v)
+                isPeak = false;
+            mean += novelty[static_cast<std::size_t>(k)];
+            ++counted;
+        }
+        if (!isPeak || v < 1.3f * static_cast<float>(mean / std::max(1, counted)))
+            continue;
+        const auto position = c * hop;
+        if (position <= hop || position >= frames - hop)
+            continue;
+        if (!peaks.empty() && position - peaks.back().position < separation * hop)
+            continue;
+        peaks.push_back({ position, v });
+    }
+    for (const auto& peak : peaks)
+        sample.strongestChange = std::max(sample.strongestChange, peak.strength);
+    sample.changes = std::move(peaks);
+    return cancelled == nullptr || !cancelled(context);
+}
+
+Chroma chromaBetween(const Sample& sample, int first, int last, Chroma* bassOut) noexcept
+{
+    Chroma out {}, bass {};
+    const auto columns = static_cast<int>(sample.chroma.size());
+    if (columns == 0 || sample.chromaHop <= 0 || last <= first)
+    {
+        if (bassOut != nullptr) *bassOut = bass;
+        return out;
+    }
+    const auto hop = sample.chromaHop;
+    // Frames whose centre lies inside the chop, skipping the edge frames that straddle the cut.
+    auto c0 = (first + hop - 1) / hop, c1 = (last - 1) / hop;
+    if (c1 - c0 >= 3) { ++c0; --c1; }
+    if (c0 > c1)
+        c0 = c1 = std::clamp((first + last) / 2 / hop, 0, columns - 1);
+    c0 = std::clamp(c0, 0, columns - 1);
+    c1 = std::clamp(c1, 0, columns - 1);
+    const auto loudest = *std::max_element(sample.chromaLevel.begin(), sample.chromaLevel.end());
+    for (int c = c0; c <= c1; ++c)
+    {
+        const auto level = sample.chromaLevel[static_cast<std::size_t>(c)];
+        const auto w = std::clamp((level - std::max(-70.0f, loudest - 45.0f)) / 12.0f, 0.0f, 1.0f);
+        for (int k = 0; k < 12; ++k)
+        {
+            out[static_cast<std::size_t>(k)] += w * sample.chroma[static_cast<std::size_t>(c)][static_cast<std::size_t>(k)];
+            bass[static_cast<std::size_t>(k)] += w * sample.bass[static_cast<std::size_t>(c)][static_cast<std::size_t>(k)];
+        }
+    }
+    normalise(out);
+    normalise(bass);
+    if (bassOut != nullptr) *bassOut = bass;
+    return out;
+}
+
+int detectChord(const Chroma& raw, const Chroma& rawBass, float* confidence) noexcept
+{
+    if (confidence != nullptr) *confidence = 0.0f;
+    if (tonality(raw) < 0.35f)
+        return noChord;
+    const auto chroma = whiten(raw);
+    const auto bass = whiten(rawBass);
+    auto best = noChord;
+    auto bestScore = 0.0f;
+    for (int root = 0; root < 12; ++root)
+        for (int minor = 0; minor < 2; ++minor)
+        {
+            const auto third = (root + (minor != 0 ? 3 : 4)) % 12, fifth = (root + 7) % 12;
+            Chroma t {};
+            t[static_cast<std::size_t>(root)] = 1.0f;
+            t[static_cast<std::size_t>(third)] = 1.0f;
+            t[static_cast<std::size_t>(fifth)] = 1.0f;
+            // The bass note decides between relatives (C vs Am share two notes).
+            const auto score = cosine(chroma, t) + 0.18f * bass[static_cast<std::size_t>(root)]
+                             - 0.05f * bass[static_cast<std::size_t>(third)];
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = root * 2 + minor;
+            }
+        }
+    if (confidence != nullptr) *confidence = std::clamp(bestScore, 0.0f, 1.0f);
+
+    // One note (an 808, a tuned kick, a bass hit) has overtones on its fifth and major
+    // third, so it can look like a major chord. A real chord plays its third as loudly
+    // as a note; an overtone is much quieter. When the third is missing, it's a note.
+    int strongest = 0;
+    for (int k = 1; k < 12; ++k)
+        if (raw[static_cast<std::size_t>(k)] > raw[static_cast<std::size_t>(strongest)]) strongest = k;
+    const auto top = raw[static_cast<std::size_t>(strongest)];
+    if (best != noChord)
+    {
+        const auto root = best / 2, third = (root + ((best & 1) != 0 ? 3 : 4)) % 12;
+        if (bestScore >= 0.62f && raw[static_cast<std::size_t>(third)] >= 0.5f * raw[static_cast<std::size_t>(root)]
+            && raw[static_cast<std::size_t>(root)] >= 0.5f * top)
+            return best;
+    }
+    // Not a chord: is it one clear note (its octaves and fifth allowed)?
+    float others = 0.0f;
+    for (int k = 0; k < 12; ++k)
+        if (k != strongest && k != (strongest + 7) % 12)
+            others = std::max(others, raw[static_cast<std::size_t>(k)]);
+    return top > 0.0f && others < 0.55f * top && tonality(raw) > 0.5f ? firstNote + strongest : noChord;
+}
+
+float harmonicMatch(const FitTable& table, int a, int b) noexcept
+{
+    if (table.count <= 0 || a < 0 || b < 0)
+        return 0.0f;
+    const auto& x = table.chop[static_cast<std::size_t>(a % table.count)];
+    const auto& y = table.chop[static_cast<std::size_t>(b % table.count)];
+    if (x.chord == noChord || y.chord == noChord)
+        return 0.7f;   // drums and noise sit anywhere
+    const auto shape = cosine(whiten(x.wholeChroma), whiten(y.wholeChroma));
+    return std::clamp(0.6f * shape + 0.2f * (x.chord == y.chord ? 1.0f : 0.0f) + 0.2f * std::min(x.keyFit, y.keyFit), 0.0f, 1.0f);
+}
+
 std::shared_ptr<FitTable> buildFitTable(const Sample& sample, const Slices& slices)
 {
     auto table = std::make_shared<FitTable>();
@@ -599,7 +1055,13 @@ std::shared_ptr<FitTable> buildFitTable(const Sample& sample, const Slices& slic
         for (int k = 0; k < 12; ++k)
             print.bodyChroma[static_cast<std::size_t>(k)] = head.chroma[static_cast<std::size_t>(k)] + tail.chroma[static_cast<std::size_t>(k)];
         normalise(print.bodyChroma);
+        Chroma bass {};
+        print.wholeChroma = chromaBetween(sample, first, last, &bass);
+        print.chord = detectChord(print.wholeChroma, bass);
+        print.keyFit = sample.key != noChord && print.chord != noChord
+                     ? std::clamp(0.5f + 0.5f * keyCorrelation(print.wholeChroma, sample.key), 0.0f, 1.0f) : 0.0f;
     }
+    table->key = sample.key;
 
     // Learn what a natural join sounds like in this recording: chop i into chop i+1.
     const auto joins = slices.count - 1;
@@ -630,7 +1092,7 @@ std::shared_ptr<FitTable> buildFitTable(const Sample& sample, const Slices& slic
     return table;
 }
 
-float joinCost(const FitTable& table, const Step& from, const Step& to, const Step* anchor) noexcept
+float joinCost(const FitTable& table, const Step& from, const Step& to, const Step* anchor, float keyWeight) noexcept
 {
     if (table.count <= 0 || from.slice < 0 || to.slice < 0)
         return 0.0f;
@@ -643,7 +1105,7 @@ float joinCost(const FitTable& table, const Step& from, const Step& to, const St
         // Keep the whole flip in the pinned chop's key.
         const auto& pinned = table.chop[static_cast<std::size_t>(anchor->slice % table.count)].bodyChroma;
         const auto& body = table.chop[static_cast<std::size_t>(to.slice % table.count)].bodyChroma;
-        cost += 0.15f * (1.0f - similarity(rotate(body, to.pitch), rotate(pinned, anchor->pitch))) / table.driftScale;
+        cost += keyWeight * (1.0f - similarity(rotate(body, to.pitch), rotate(pinned, anchor->pitch))) / table.driftScale;
     }
     const auto a = from.slice % table.count, b = to.slice % table.count;
     if (a == b)
@@ -655,7 +1117,7 @@ float joinCost(const FitTable& table, const Step& from, const Step& to, const St
 
 float joinQuality(const FitTable& table, const Step& from, const Step& to, const Step* anchor) noexcept
 {
-    return std::clamp(1.2f - 0.6f * joinCost(table, from, to, anchor), 0.0f, 1.0f);
+    return std::clamp(1.2f - 0.6f * joinCost(table, from, to, anchor, 0.15f), 0.0f, 1.0f);
 }
 
 bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::uint32_t& seed,
@@ -694,13 +1156,47 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
         return -1;
     };
 
+    // IN KEY: only chops whose harmony agrees with the loop (or with each other) are used.
+    const auto* harmony = fit != nullptr && fit->table != nullptr && fit->table->count >= slices ? fit->table : nullptr;
+    const auto inKey = (flags & randomInKey) != 0 && harmony != nullptr;
+    auto newChop = [&]() -> int
+    {
+        if (!inKey)
+            return draw(seed, slices);
+        std::vector<int> fits;
+        for (int c = 0; c < slices; ++c)
+            if (const auto& print = harmony->chop[static_cast<std::size_t>(c)]; print.chord == noChord || print.keyFit >= 0.55f)
+                fits.push_back(c);
+        return fits.empty() ? draw(seed, slices) : fits[static_cast<std::size_t>(draw(seed, static_cast<int>(fits.size())))];
+    };
+    // A swap partner for chop a among the chops `allowed` says are free. IN KEY keeps the
+    // best-matching third of them (and only real matches when there are any).
+    auto partnerFor = [&](int a, const auto& allowed) -> int
+    {
+        std::vector<std::pair<float, int>> options;
+        for (int c = 0; c < slices; ++c)
+            if (c != a && allowed(c))
+                options.push_back({ inKey ? harmonicMatch(*harmony, a, c) : 0.0f, c });
+        if (options.empty())
+            return -1;
+        if (inKey)
+        {
+            std::stable_sort(options.begin(), options.end(), [](auto& x, auto& y) { return x.first > y.first; });
+            auto keep = std::max<std::size_t>(1, (options.size() + 2) / 3);
+            while (keep > 1 && options[keep - 1].first < 0.6f)
+                --keep;
+            options.resize(keep);
+        }
+        return options[static_cast<std::size_t>(draw(seed, static_cast<int>(options.size())))].second;
+    };
+
     // An empty bank gets a fresh phrase so the button never does nothing.
     if (hitCount(result) == 0)
     {
         const auto hits = 5 + draw(seed, 5);
         for (int i = 0; i < hits; ++i)
             if (const auto at = pickEmpty(result); at >= 0)
-                result[at] = { draw(seed, slices), 100, 1, 0, false };
+                result[at] = { newChop(), 100, 1, 0, false };
     }
 
     if ((flags & randomRhythm) != 0)
@@ -725,7 +1221,7 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
             if (chance(seed) < 0.5f && hitCount(result) < 13)
             {
                 if (const auto at = pickEmpty(result); at >= 0)
-                    result[at] = { draw(seed, slices), 100, 1, 0, false };
+                    result[at] = { newChop(), 100, 1, 0, false };
             }
             else if (hitCount(result) > 4)
             {
@@ -789,7 +1285,7 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
         {
             from.slice = fromChop;
             to.slice = toChop;
-            return std::exp(-static_cast<double>(strength * joinCost(table, from, to, &pinned) / temperature));
+            return std::exp(-static_cast<double>(strength * joinCost(table, from, to, &pinned, inKey ? 0.45f : 0.15f) / temperature));
         };
         const auto hits = static_cast<int>(order.size());
         std::vector<std::array<double, maxSlices>> alpha(static_cast<std::size_t>(hits));
@@ -856,7 +1352,27 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
         // share a chop, so what the readout says is exactly what happened.
         std::array<int, maxSlices> map {};
         std::iota(map.begin(), map.end(), 0);
-        if (amount >= 0.95f)
+        if (amount >= 0.95f && inKey)
+        {
+            // Full shuffle, but every chop only trades with one that fits it.
+            std::vector<int> order(static_cast<std::size_t>(slices));
+            std::iota(order.begin(), order.end(), 0);
+            for (int i = slices - 1; i > 0; --i)
+                std::swap(order[static_cast<std::size_t>(i)], order[static_cast<std::size_t>(draw(seed, i + 1))]);
+            std::array<bool, maxSlices> taken {};
+            for (const auto a : order)
+            {
+                if (taken[static_cast<std::size_t>(a)])
+                    continue;
+                const auto b = partnerFor(a, [&](int c) { return !taken[static_cast<std::size_t>(c)]; });
+                if (b < 0)
+                    continue;
+                taken[static_cast<std::size_t>(a)] = taken[static_cast<std::size_t>(b)] = true;
+                std::swap(map[static_cast<std::size_t>(a)], map[static_cast<std::size_t>(b)]);
+                if (swaps != nullptr) swaps->push_back({ a, b });
+            }
+        }
+        else if (amount >= 0.95f)
         {
             for (int i = slices - 1; i > 0; --i)
                 std::swap(map[static_cast<std::size_t>(i)], map[static_cast<std::size_t>(draw(seed, i + 1))]);
@@ -879,16 +1395,9 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
                     break;
                 if (taken[static_cast<std::size_t>(a)])
                     continue;
-                int options = 0;
-                for (int c = 0; c < slices; ++c)
-                    if (c != a && !taken[static_cast<std::size_t>(c)]) ++options;
-                if (options == 0)
+                const auto b = partnerFor(a, [&](int c) { return !taken[static_cast<std::size_t>(c)]; });
+                if (b < 0)
                     break;
-                auto pick = draw(seed, options);
-                int b = -1;
-                for (int c = 0; c < slices && b < 0; ++c)
-                    if (c != a && !taken[static_cast<std::size_t>(c)] && pick-- == 0)
-                        b = c;
                 taken[static_cast<std::size_t>(a)] = taken[static_cast<std::size_t>(b)] = true;
                 std::swap(map[static_cast<std::size_t>(a)], map[static_cast<std::size_t>(b)]);
                 if (swaps != nullptr) swaps->push_back({ a, b });
@@ -913,8 +1422,7 @@ bool randomizePattern(Pattern& pattern, int slices, int flags, int chaos, std::u
                 break;
             }
             const auto a = step.slice;
-            auto b = draw(seed, slices - 1);
-            if (b >= a) ++b;
+            const auto b = partnerFor(a, [](int) { return true; });
             if (anchor >= 0)
             {
                 step.slice = b;   // never touch the pinned chop

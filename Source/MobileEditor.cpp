@@ -170,6 +170,17 @@ void Pad::paint(juce::Graphics& g)
     g.setColour(exists ? text : faint);
     g.setFont(mono(17.0f));
     g.drawText(two(chop + 1), r.withTrimmedBottom(10.0f), juce::Justification::centred);
+    // The chord this chop plays
+    const auto& fit = editor.view.session.fit;
+    if (exists && fit != nullptr && chop < fit->count)
+        if (const auto code = fit->chop[(size_t) chop].chord; code != chop::noChord)
+        {
+            // Chords in the chop's colour; a single note (808, tuned kick) quieter, with "note".
+            const auto isNote = chop::isNote(code);
+            g.setColour(isNote ? dim : colour.brighter(0.2f));
+            g.setFont(sans(isNote ? 9.0f : 10.0f, !isNote));
+            g.drawText(juce::String(chop::chordName(code)) + (isNote ? " note" : ""), r.reduced(7.0f, 5.0f), juce::Justification::topRight);
+        }
 }
 
 void Pad::mouseDown(const juce::MouseEvent&)
@@ -294,10 +305,10 @@ Editor::Editor(EpsilonChopProcessor& p) : juce::AudioProcessorEditor(p), process
 
     load.onClick = [this] { chooseSample(); };
 
-    mode.setOptions({ "TRANSIENT", "BEAT", "GRID", "RANDOM" },
-                    { (int) chop::SliceMode::transient, (int) chop::SliceMode::beat, (int) chop::SliceMode::grid,
-                      (int) chop::SliceMode::random });
-    mode.fontHeight = 10.5f;
+    mode.setOptions({ "HITS", "CHORD", "BEAT", "GRID", "RANDOM" },
+                    { (int) chop::SliceMode::transient, (int) chop::SliceMode::harmonic, (int) chop::SliceMode::beat,
+                      (int) chop::SliceMode::grid, (int) chop::SliceMode::random });
+    mode.fontHeight = 10.0f;
     mode.reportReselect = true;
     mode.onChange = [this](int v)
     {
@@ -446,7 +457,7 @@ void Editor::syncControls()
     const auto hasSample = view.session.sample != nullptr;
     const auto chops = view.session.slices.count;
     mode.setSelected((int) edit.mode);
-    if (edit.mode == chop::SliceMode::transient)
+    if (edit.mode == chop::SliceMode::transient || edit.mode == chop::SliceMode::harmonic)
         density.setOptions({ "8", "16", "32" }, { 8, 16, 32 });
     else
         density.setOptions({ "4", "8", "16", "32" }, { 4, 8, 16, 32 });
@@ -670,7 +681,11 @@ void Editor::paintContent(juce::Graphics& g)
     g.setColour(s.sample != nullptr ? text : faint);
     auto name = s.sample != nullptr ? juce::String::fromUTF8(s.sample->name.c_str()) : juce::String("No sample");
     if (s.sample != nullptr)
+    {
         name << "  -  " << s.slices.count << " chops";
+        if (s.sample->key != chop::noChord)
+            name << "  -  " << juce::String(chop::keyName(s.sample->key));
+    }
     g.drawFittedText(name, 52, 30, 248, 14, juce::Justification::centredLeft, 1, 0.8f);
 
     if (page == 1)

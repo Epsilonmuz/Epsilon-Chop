@@ -37,7 +37,10 @@ bool analyzeTransients(Sample& sample, const std::function<bool()>& cancelled)
     sample.strongest = 0.0f;
     sample.estimatedBpm = estimateLoopBpm(frames, rate);
     if (frames < 64)
+    {
+        analyzeHarmony(sample);
         return !cancelled();
+    }
     int order = 8;
     while ((1 << order) < rate * 0.016)
         ++order;
@@ -133,6 +136,10 @@ bool analyzeTransients(Sample& sample, const std::function<bool()>& cancelled)
     std::sort(onsets.begin(), onsets.end(), [](const auto& a, const auto& b) { return a.position < b.position; });
     sample.onsets = std::move(onsets);
     sample.estimatedBpm = estimateLoopBpm(frames, rate);
-    return !cancelled();
+    if (cancelled())
+        return false;
+    // Chords and key, for CHORD mode, the chord labels and IN KEY.
+    auto ask = [](void* context) { return (*static_cast<const std::function<bool()>*>(context))(); };
+    return analyzeHarmony(sample, ask, const_cast<std::function<bool()>*>(&cancelled));
 }
 }

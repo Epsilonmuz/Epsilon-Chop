@@ -1,6 +1,6 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.5.0 · sample chopper instrument (VST3 · AU · Standalone)**
+**Epsilon Sounds · v0.6.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
 ## Install (no build needed)
 
@@ -13,7 +13,7 @@
 
 Drop in a sample. Epsilon Chop cuts it into colour-coded chops, lays them on a 16-step ribbon and flips them with one roll of the dice. Pin one chop and **Dovetail** picks every other chop so it flows out of the one before it: same key, smooth level, matching tone, all the way round the bar. **Hit Align** lands every hit exactly on the grid whatever chop goes where, **CUT** choke works like FL Studio's "Cut by 1" on every pad, and **VINTAGE** adds the punch and grit of classic 12-bit samplers. Finger-drum chops straight from your computer keyboard.
 
-![Epsilon Chop v0.5.0](preview.png)
+![Epsilon Chop v0.6.0](preview.png)
 
 [Download the v0.3.0 Projucer project (JUCE 9.0.5 included)](Epsilon-Chop-v0.3.0-Projucer.zip)
 
@@ -36,6 +36,14 @@ The same Chop, as a standalone iPhone app with a touch layout: **LOAD** a sample
 With a free Apple ID the app runs for 7 days, then press Run again. The Apple Developer Program ($99/year) removes that limit and allows TestFlight and the App Store. JUCE is AGPLv3 or commercial: selling a closed-source app on the App Store needs a commercial JUCE licence.
 
 GitHub builds it for iPhone and the iPhone simulator on every push, launches it in the simulator and checks it keeps running.
+
+## New in v0.6.0: CHORD mode, chord labels and IN KEY
+
+![CHORD mode](preview-chord.png)
+
+- **CHORD** chop mode cuts wherever the chord or bass note changes, even where there is no drum hit, and lands each cut on the nearest attack. A C – Am – F – G loop gives four chops, one per chord.
+- **Chord labels** on every chop in every mode (`C`, `Am`, `F#m` …), single notes shown as notes (an 808 reads `Ab note`, not a fake chord), and the loop's **key** in the header.
+- **IN KEY** for RANDOMIZE: SWAP only trades chops whose chords agree, new hits use in-key chops, and Dovetail holds the key harder.
 
 ## New in v0.5.0: pitch the whole loop
 

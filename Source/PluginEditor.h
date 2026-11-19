@@ -185,7 +185,8 @@ private:
     ui::DiceButton dice;
     ui::Knob chaos { "CHAOS" };
     std::array<juce::TextButton, 6> flags;
-    juce::TextButton undoButton { "UNDO" };
+    juce::TextButton inKey { "IN KEY" }, undoButton { "UNDO" };
+    int randomBits() const;
 
     juce::TextButton previousChop { "<" }, nextChop { ">" };
     ui::Knob gate { "GATE" }, pitch { "PITCH" };

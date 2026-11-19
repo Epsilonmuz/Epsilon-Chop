@@ -338,9 +338,81 @@ void testExport(EpsilonChopProcessor& processor)
     std::cout << "Export: chop, all chops, seamless pattern loop, file reuse and no overwrites passed.\n";
 }
 
+// A real WAV of four chords (C - Am - F - G, one per second) under a drum hit on every
+// eighth note, loaded the normal way: CHORD mode must cut on the chord changes and label them.
+void writeChordFixture(const juce::File& path)
+{
+    juce::WavAudioFormat wav;
+    path.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream(new juce::FileOutputStream(path));
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions {}.withSampleRate(rate).withNumChannels(2).withBitsPerSample(24));
+    require(writer != nullptr, "open chord WAV fixture");
+    const std::array<std::array<int, 4>, 4> chords { { { 36, 60, 64, 67 }, { 45, 57, 60, 64 }, { 41, 60, 65, 69 }, { 43, 59, 62, 67 } } };
+    const auto frames = rate * 4;
+    juce::AudioBuffer<float> audio(2, frames);
+    std::uint32_t noise = 7u;
+    for (int i = 0; i < frames; ++i)
+    {
+        const auto t = static_cast<double>(i) / rate;
+        const auto& chord = chords[static_cast<std::size_t>(std::min(3, i / rate))];
+        double v = 0.0;
+        for (int n = 0; n < 4; ++n)
+        {
+            const auto f = 440.0 * std::pow(2.0, (chord[static_cast<std::size_t>(n)] - 69) / 12.0);
+            for (int h = 1; h <= 5; ++h)
+                v += (n == 0 ? 0.16 : 0.09) / h * std::sin(juce::MathConstants<double>::twoPi * f * h * t);
+        }
+        const auto age = std::fmod(t, 0.25);
+        noise = noise * 1664525u + 1013904223u;
+        const auto white = (static_cast<double>(noise >> 8) / 16777216.0) * 2.0 - 1.0;
+        v += 0.35 * std::exp(-60.0 * age) * white + 0.5 * std::exp(-18.0 * age) * std::sin(juce::MathConstants<double>::twoPi * 55.0 * age);
+        audio.setSample(0, i, static_cast<float>(0.45 * v));
+        audio.setSample(1, i, static_cast<float>(0.42 * v));
+    }
+    require(writer->writeFromAudioSampleBuffer(audio, 0, frames), "write chord WAV fixture");
+}
+
+void checkChordMode(const juce::File& folder, const char* previewFolder)
+{
+    const auto input = folder.getChildFile("Chord Loop.wav");
+    writeChordFixture(input);
+    EpsilonChopProcessor processor;
+    processor.loadFile(input);
+    auto state = waitForSample(processor);
+    require(chop::keyName(state.session.sample->key) == "C major", "chord loop is in C major");
+    processor.setMode(chop::SliceMode::harmonic);
+    state = processor.editorState();
+    require(state.session.slices.count == 4, "CHORD mode cuts the four chords");
+    for (int s = 1; s < state.session.slices.count && s < 4; ++s)
+        require(std::abs(state.session.slices.edge[static_cast<std::size_t>(s)] - s * rate) < rate / 50, "chord cuts land on the change");
+    const std::array<const char*, 4> names { "C", "Am", "F", "G" };
+    require(state.session.fit != nullptr && state.session.fit->count == state.session.slices.count, "chord labels are ready");
+    for (int s = 0; s < std::min(4, state.session.slices.count); ++s)
+        require(chop::chordName(state.session.fit->chop[static_cast<std::size_t>(s)].chord) == names[static_cast<std::size_t>(s)], "each chop is labelled with its chord");
+
+    // IN KEY is saved with the session, and a reopened session finds the same chords.
+    processor.setRandomFlags(chop::randomChops | chop::randomInKey);
+    require(processor.editorState().session.edit.randomFlags == (chop::randomChops | chop::randomInKey), "IN KEY switches on");
+    processor.arrangeInOrder();
+    processor.randomize();
+    juce::MemoryBlock saved;
+    processor.getStateInformation(saved);
+    EpsilonChopProcessor restored;
+    restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    const auto back = restored.editorState();
+    require(back.session.edit.mode == chop::SliceMode::harmonic && back.session.slices.edge == state.session.slices.edge,
+            "CHORD mode and its cuts come back with the session");
+    require((back.session.edit.randomFlags & chop::randomInKey) != 0, "IN KEY comes back with the session");
+    require(back.session.fit != nullptr && chop::chordName(back.session.fit->chop[1].chord) == "Am", "chord labels come back with the session");
+    if (previewFolder != nullptr)
+        savePreview(restored, juce::File(juce::String(previewFolder)).getChildFile("preview-chord.png"), true);
+    std::cout << "CHORD mode, chord labels, key and IN KEY passed.\n";
+}
+
 void run(const char* previewFolder)
 {
     TempFolder fixture;
+    checkChordMode(fixture.path, previewFolder);
     const auto input = fixture.path.getChildFile("Jersey Chop Demo.wav");
     writeFixture(input);
 
