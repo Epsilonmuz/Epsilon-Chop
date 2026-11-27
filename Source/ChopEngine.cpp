@@ -926,6 +926,86 @@ bool analyzeHarmony(Sample& sample, bool (*cancelled)(void*), void* context)
             continue;
         peaks.push_back({ position, v });
     }
+    // v0.7: place each change sharply. The novelty curve knows THAT the harmony moved (0.25 s either side,
+    // one column every ~45 ms), not exactly WHEN, so a chord change with no drum hit on it (a pad, a flipped
+    // soul sample, legato keys) was cut up to ~40 ms late and the chop started on the old chord.
+    // Short frames (~23 ms, 1.5 ms apart) are compared with the chord before and the chord after; the cut
+    // goes where the sound stops matching the old chord better than the new one. It is the harmonic change
+    // detection idea of Harte, Sandler & Gasser (2006), read at a much finer time scale around each change.
+    {
+        int fine = 128;
+        while (fine < lowRate * 0.023) fine <<= 1;
+        const auto fineHop = std::max(1, static_cast<int>(lowRate * 0.0015));
+        std::vector<std::pair<int, int>> fineMap;                                   // bin, pitch class
+        for (int bin = 1; bin < fine / 2; ++bin)
+        {
+            const auto frequency = bin * lowRate / fine;
+            if (frequency < 180.0 || frequency > 5000.0) continue;                   // too coarse below that
+            const auto semitones = 12.0 * std::log2(frequency / 440.0) + 69.0;
+            fineMap.push_back({ bin, static_cast<int>(((std::lround(semitones) % 12) + 12) % 12) });
+        }
+        std::vector<std::complex<float>> fw(static_cast<std::size_t>(fine));
+        std::vector<float> fwin(static_cast<std::size_t>(fine));
+        for (int i = 0; i < fine; ++i) fwin[static_cast<std::size_t>(i)] = 0.5f - 0.5f * static_cast<float>(std::cos(2.0 * pi * i / (fine - 1)));
+        auto fineChroma = [&](int centre)
+        {
+            Chroma c {};
+            for (int i = 0; i < fine; ++i)
+            {
+                const auto idx = centre - fine / 2 + i;
+                fw[static_cast<std::size_t>(i)] = { (idx >= 0 && idx < lowFrames ? x[static_cast<std::size_t>(idx)] : 0.0f) * fwin[static_cast<std::size_t>(i)], 0.0f };
+            }
+            fft(fw);
+            for (const auto& m : fineMap) c[static_cast<std::size_t>(m.second)] += std::abs(fw[static_cast<std::size_t>(m.first)]);
+            return c;
+        };
+        for (auto& peak : peaks)
+        {
+            const auto c = peak.position / hop;
+            Chroma before {}, after {};
+            for (int k = 0; k < span; ++k)
+            {
+                const auto b = static_cast<std::size_t>(std::max(0, c - 2 - k)), a = static_cast<std::size_t>(std::min(columns - 1, c + 1 + k));
+                for (int pc = 0; pc < 12; ++pc)
+                {
+                    before[static_cast<std::size_t>(pc)] += vote[b] * sample.chroma[b][static_cast<std::size_t>(pc)];
+                    after[static_cast<std::size_t>(pc)] += vote[a] * sample.chroma[a][static_cast<std::size_t>(pc)];
+                }
+            }
+            if (cosine(before, after) > 0.97f) continue;                              // too alike to place finely
+            const auto centreLow = peak.position / factor;
+            const auto reach = static_cast<int>(lowRate * 0.10);
+            // the curve of "sounds like the new chord" across the window, then the crossing where it swings
+            // hardest from old to new (a passing note can cross briefly; the real change crosses for good)
+            std::vector<float> d;
+            std::vector<int> at;
+            for (int t = centreLow - reach; t <= centreLow + reach; t += fineHop)
+            {
+                const auto f = fineChroma(t);
+                d.push_back(cosine(f, after) - cosine(f, before));
+                at.push_back(t);
+            }
+            const auto side = std::max(2, static_cast<int>(lowRate * 0.015 / fineHop));
+            int bestLow = -1;
+            float bestSwing = 0.02f;
+            for (int i = 1; i < static_cast<int>(d.size()); ++i)
+            {
+                if (!(d[static_cast<std::size_t>(i - 1)] < 0.0f && d[static_cast<std::size_t>(i)] >= 0.0f)) continue;
+                float pre = 0.0f, post = 0.0f; int np = 0, nq = 0;
+                for (int k = std::max(0, i - side); k < i; ++k) { pre += d[static_cast<std::size_t>(k)]; ++np; }
+                for (int k = i; k < std::min(static_cast<int>(d.size()), i + side); ++k) { post += d[static_cast<std::size_t>(k)]; ++nq; }
+                const auto swing = post / std::max(1, nq) - pre / std::max(1, np);
+                if (swing > bestSwing)
+                {
+                    bestSwing = swing;
+                    const auto a = d[static_cast<std::size_t>(i - 1)], b = d[static_cast<std::size_t>(i)];
+                    bestLow = at[static_cast<std::size_t>(i - 1)] + static_cast<int>(std::lround(a / (a - b) * fineHop));
+                }
+            }
+            if (bestLow >= 0)
+                peak.position = std::clamp(bestLow * factor, hop, frames - hop);
+        }
+    }
     for (const auto& peak : peaks)
         sample.strongestChange = std::max(sample.strongestChange, peak.strength);
     sample.changes = std::move(peaks);

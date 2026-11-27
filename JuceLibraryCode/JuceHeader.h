@@ -45,7 +45,7 @@ namespace ProjectInfo
 {
     const char* const  projectName    = "Epsilon Chop";
     const char* const  companyName    = "Epsilon Sounds";
-    const char* const  versionString  = "0.6.0";
-    const int          versionNumber  = 0x600;
+    const char* const  versionString  = "0.7.0";
+    const int          versionNumber  = 0x700;
 }
 #endif

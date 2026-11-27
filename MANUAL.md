@@ -1,4 +1,4 @@
-# Epsilon Chop v0.6.0 · User Manual
+# Epsilon Chop v0.7.0 · User Manual
 
 **Epsilon Sounds · Sample chopper instrument · VST3 / AU / Standalone**
 
@@ -402,6 +402,7 @@ Chop settings, patterns and randomizer settings are saved with the project, but 
    - **Chromagram:** ~186 ms Hann windows hopping ~46 ms. Only spectral *peaks* between 50 Hz and 5 kHz count (tones make peaks, drums mostly don't), each weighted by how in tune it is, and folded into 12 pitch classes. A second chroma keeps only the bass register (below 260 Hz).
    - **Which frames vote:** frames more than 45 dB under the loudest are ignored, and flat (noisy) frames count less.
    - **Chord changes:** at every frame, the harmony of the next ~0.25 s is compared with the previous ~0.25 s (70% chord shape, 30% bass). Peaks in that difference, at least 0.2 s apart and clearly above their surroundings, are the change points, saved with their strength.
+   - **Sharp placement (v0.7.0):** the change point above is only known to ~45 ms. Around each one, short ~23 ms frames every 1.5 ms are compared with the chord before and the chord after, and the change goes where the sound stops matching the old chord and starts matching the new one (the decisive crossing, not a passing note). A chord change with no drum hit on it (pads, legato keys, a flipped soul sample) is cut within a few ms of where it really changes; v0.6.0 cut it up to ~40 ms late, so the chop started on the old chord.
    - **Key:** everything the loop plays is matched against the 24 Krumhansl–Kessler major and minor key profiles. A major key and its relative minor (C major and A minor) share the same notes, so the chord the loop rests on most decides, and the first chord breaks a tie.
    - **Chord per chop:** the chop's average chroma is matched against all 24 major and minor triads, with the bass note deciding between relatives. If the third is much quieter than a played note would be, it's an overtone, so the chop is labelled as a **single note** rather than a major chord.
    - Analysing a 2-minute sample takes about a third of a second. It runs again when a project reopens (it isn't stored), so old projects get labels too.
@@ -410,7 +411,7 @@ Chop settings, patterns and randomizer settings are saved with the project, but 
 ### How each mode picks cuts (instant, no re-analysis)
 
 - **Transient:** keeps onsets with strength ≥ strongest × (0.6 × (1 − sensitivity/100)² + 0.004). If more than MAX − 1 remain, the strongest win. This is why the SENSITIVITY slider responds instantly.
-- **Chord:** keeps change points with strength ≥ strongest × (0.75 × (1 − sensitivity/100)² + 0.05); if more than MAX − 1 remain, the strongest win. Each cut moves onto the nearest detected hit within 120 ms, otherwise it stays where the harmony moved. No change points = one whole chop.
+- **Chord:** keeps change points with strength ≥ strongest × (0.75 × (1 − sensitivity/100)² + 0.05); if more than MAX − 1 remain, the strongest win. Each cut moves onto the nearest detected hit within 120 ms, otherwise it stays where the harmony moved (placed to within a few ms since v0.7.0). No change points = one whole chop.
 - **Beat:** described in [Chop modes](#chop-modes).
 - **Random:** a seeded generator places cuts with a minimum spacing of the length ÷ (4 × count).
 - In every automatic mode, chops are at least min(25 ms, length/64) long. ZERO-X then snaps each cut to a sign change in the mono sum within ±2 ms.

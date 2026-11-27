@@ -1,6 +1,6 @@
 # Epsilon Chop
 
-**Epsilon Sounds · v0.6.0 · sample chopper instrument (VST3 · AU · Standalone)**
+**Epsilon Sounds · v0.7.0 · sample chopper instrument (VST3 · AU · Standalone)**
 
 ## Install (no build needed)
 
@@ -36,6 +36,10 @@ The same Chop, as a standalone iPhone app with a touch layout: **LOAD** a sample
 With a free Apple ID the app runs for 7 days, then press Run again. The Apple Developer Program ($99/year) removes that limit and allows TestFlight and the App Store. JUCE is AGPLv3 or commercial: selling a closed-source app on the App Store needs a commercial JUCE licence.
 
 GitHub builds it for iPhone and the iPhone simulator on every push, launches it in the simulator and checks it keeps running.
+
+## New in v0.7.0: chord cuts land exactly where the chord changes
+
+CHORD mode now places every cut where the harmony really moves, even when no drum hit marks it: pads, legato keys and flipped soul samples are cut within a few ms of the change (v0.6.0 cut those up to ~40 ms late, so a chop started on the old chord). Each change is re-read with short frames compared with the chord before and after it (harmonic change detection, Harte et al. 2006, at a fine time scale). Chord changes that land on a hit still snap onto the hit.
 
 ## New in v0.6.0: CHORD mode, chord labels and IN KEY
 
