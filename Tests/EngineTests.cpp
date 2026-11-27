@@ -871,6 +871,27 @@ void harmony()
         require(all <= 3, "the repeated F chord is not cut in two");
     }
 
+    // v0.7: chord changes with no hit on them (pads, legato keys, a flipped soul sample) are cut where the
+    // chord really changes, not up to ~40 ms late. Changes every 0.937 s, so they never sit on a column.
+    for (const auto sr : { 44100.0, 48000.0 })
+    {
+        const std::vector<std::array<int, 4>> prog { { { 36, 60, 64, 67 } }, { { 45, 57, 60, 64 } }, { { 41, 60, 65, 69 } }, { { 43, 59, 62, 67 } } };
+        auto legato = makeChordLoop(prog, 0.937, sr, false);
+        legato->onsets.clear();
+        legato->strongest = 0.0f;
+        auto edit = chop::defaultEdit();
+        edit.mode = chop::SliceMode::harmonic;
+        edit.density = 16;
+        edit.sensitivity = 60;
+        edit.snapZero = false;
+        const auto slices = chop::makeSlices(*legato, edit);
+        require(slices.count == 4, "legato chords (no hits) cut into four chops (got " + std::to_string(slices.count) + ")");
+        double worst = 0.0;
+        for (int s = 1; s < std::min(4, slices.count); ++s)
+            worst = std::max(worst, std::abs(slices.edge[static_cast<std::size_t>(s)] - s * 0.937 * sr) / sr * 1000.0);
+        require(worst < 8.0, "legato chord cuts land within 8 ms of the change (worst " + std::to_string(worst) + " ms, was ~40)");
+    }
+
     // A loop on one chord, and a drum loop, have nothing to cut on: one chop, no label.
     {
         const auto held = makeChordLoop({ { { 36, 60, 64, 67 } }, { { 36, 60, 64, 67 } } }, 1.0);
